@@ -1,0 +1,56 @@
+name: Build Calabi Hats
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (VST3 / AU / CLAP, universal)
+            os: macos-14
+          - name: Windows (VST3 / CLAP)
+            os: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux-style deps (macOS no-op)
+        if: runner.os == 'macOS'
+        run: echo "Xcode command line tools are preinstalled"
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Collect macOS plugins
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p out
+          cp -R build/CalabiHats_artefacts/Release/VST3/*.vst3        out/ || true
+          cp -R build/CalabiHats_artefacts/Release/AU/*.component     out/ || true
+          cp -R build/CalabiHats_artefacts/Release/CLAP/*.clap        out/ || true
+          cp -R build/CalabiHats_artefacts/Release/Standalone/*.app   out/ || true
+
+      - name: Collect Windows plugins
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p out
+          cp -R build/CalabiHats_artefacts/Release/VST3/*.vst3        out/ || true
+          cp -R build/CalabiHats_artefacts/Release/CLAP/*.clap        out/ || true
+          cp -R build/CalabiHats_artefacts/Release/Standalone/*.exe   out/ || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CalabiHats-${{ runner.os }}
+          path: out/
