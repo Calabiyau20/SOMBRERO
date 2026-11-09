@@ -84,7 +84,7 @@ APVTS::ParameterLayout CalabiHatsProcessor::createLayout()
         layout.add (std::make_unique<juce::AudioParameterBool>  (juce::ParameterID { "lane" + n + "On", 1 },    "Lane " + n + " On", true));
         layout.add (std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "lane" + n + "Div", 1 },   "Lane " + n + " Division", divisionNames, l == 1 ? 2 : 1));
         layout.add (std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "lane" + n + "Dir", 1 },   "Lane " + n + " Direction", laneDirections, l == 1 ? 0 : 2));
-        layout.add (std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "lane" + n + "NRange", 1 }, "Lane " + n + " NRange", laneRanges, l == 1 ? 0 : 1));
+        layout.add (std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "lane" + n + "Range", 1 }, "Lane " + n + " Range", laneRanges, l == 1 ? 0 : 1));
         layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "lane" + n + "Amount", 1 },"Lane " + n + " Amount",
                                                                  NRange (0.0f, 1.0f), l == 1 ? 0.45f : 0.35f));
     }
@@ -224,7 +224,7 @@ float CalabiHatsProcessor::laneValueAt (int laneIndex, double ppq) const
 
     index = juce::jlimit (0, len - 1, index);
     const float raw = pattern.lane[(size_t) laneIndex][(size_t) index].load();
-    const bool bipolar = paramValue (("lane" + n + "NRange").toRawUTF8()) > 0.5f;
+    const bool bipolar = paramValue (("lane" + n + "Range").toRawUTF8()) > 0.5f;
     return bipolar ? raw * 2.0f - 1.0f : raw;
 }
 

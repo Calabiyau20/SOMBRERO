@@ -129,8 +129,17 @@ public:
         addAndMakeVisible (slider);
 
         param = p.apvts.getParameter (paramID);
-        attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
-            p.apvts, paramID, slider);
+        jassert (param != nullptr);   // a missing id must never take the editor down
+
+        if (param != nullptr)
+        {
+            attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
+                p.apvts, paramID, slider);
+        }
+        else
+        {
+            slider.setEnabled (false);
+        }
 
         setName (displayName);
     }

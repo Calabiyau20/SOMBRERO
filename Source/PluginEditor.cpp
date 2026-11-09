@@ -5,6 +5,17 @@ namespace
 {
     constexpr int knobWidth = 64, knobHeight = 68;
 
+    /** Parameter display name, safe when the id is missing. */
+    juce::String nameOf (juce::AudioProcessorValueTreeState& state, const juce::String& id,
+                         const juce::String& fallback)
+    {
+        if (auto* p = state.getParameter (id))
+            return p->getName (12);
+
+        jassertfalse;
+        return fallback;
+    }
+
     juce::Label* makeCaption (juce::OwnedArray<juce::Label>& store, juce::Component& parent,
                               const juce::String& text, juce::Colour colour = cy::faint, float size = 9.0f)
     {
@@ -43,8 +54,7 @@ CalabiHatsEditor::CalabiHatsEditor (CalabiHatsProcessor& p)
 
     for (auto id : { "arpOctaves", "arpSteps", "arpGate", "arpSwing" })
     {
-        auto* k = knobs.add (new KnobBox (proc, id,
-                                          proc.apvts.getParameter (id)->getName (12)));
+        auto* k = knobs.add (new KnobBox (proc, id, nameOf (proc.apvts, id, id)));
         arpContent.addAndMakeVisible (k);
     }
 
@@ -55,8 +65,7 @@ CalabiHatsEditor::CalabiHatsEditor (CalabiHatsProcessor& p)
 
     for (auto id : { "euPulses", "euSteps", "euRotate", "euAccent" })
     {
-        auto* k = knobs.add (new KnobBox (proc, id,
-                                          proc.apvts.getParameter (id)->getName (12).replace ("Euclid ", "")));
+        auto* k = knobs.add (new KnobBox (proc, id, nameOf (proc.apvts, id, id).replace ("Euclid ", "")));
         arpContent.addAndMakeVisible (k);
     }
 
@@ -85,8 +94,9 @@ CalabiHatsEditor::CalabiHatsEditor (CalabiHatsProcessor& p)
         auto* onButton = buttons.add (new juce::TextButton ("ON"));
         onButton->setClickingTogglesState (true);
         laneContent.addAndMakeVisible (onButton);
-        buttonAttachments.add (new juce::AudioProcessorValueTreeState::ButtonAttachment (
-            proc.apvts, "lane" + n + "On", *onButton));
+        if (proc.apvts.getParameter ("lane" + n + "On") != nullptr)
+            buttonAttachments.add (new juce::AudioProcessorValueTreeState::ButtonAttachment (
+                proc.apvts, "lane" + n + "On", *onButton));
 
         addCombo (laneContent, "lane" + n + "Div", "Division");
         addCombo (laneContent, "lane" + n + "Dir", "Direction");
@@ -164,12 +174,18 @@ KnobBox* CalabiHatsEditor::addKnob (juce::Component& parent, int dest)
 void CalabiHatsEditor::addCombo (juce::Component& parent, const juce::String& paramID, const juce::String& label)
 {
     auto* box = combos.add (new juce::ComboBox());
+    auto* parameter = proc.apvts.getParameter (paramID);
+    jassert (parameter != nullptr);   // a missing id must never take the editor down
 
-    if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter (paramID)))
+    if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (parameter))
         box->addItemList (choice->choices, 1);
 
     parent.addAndMakeVisible (box);
-    comboAttachments.add (new juce::AudioProcessorValueTreeState::ComboBoxAttachment (proc.apvts, paramID, *box));
+
+    if (parameter != nullptr)
+        comboAttachments.add (new juce::AudioProcessorValueTreeState::ComboBoxAttachment (proc.apvts, paramID, *box));
+    else
+        box->setEnabled (false);
 
     auto* caption = makeCaption (labels, parent, label.toUpperCase());
     caption->setComponentID ("caption:" + paramID);
