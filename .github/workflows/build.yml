@@ -1,5 +1,8 @@
 name: Build Calabi Hats
 
+permissions:
+  contents: write
+
 on:
   push:
     branches: [ main, master ]
@@ -54,3 +57,23 @@ jobs:
         with:
           name: CalabiHats-${{ runner.os }}
           path: out/
+
+      - name: Zip (macOS)
+        if: runner.os == 'macOS'
+        run: cd out && zip -qry ../CalabiHats-macOS.zip . && cd ..
+
+      - name: Zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path out\* -DestinationPath CalabiHats-Windows.zip -Force
+
+      - name: Publish the zip on a dist branch
+        shell: bash
+        run: |
+          git config user.name "Calabi Hats CI"
+          git config user.email "ci@calabiyau.live"
+          git checkout --orphan dist-${{ runner.os }}
+          git reset
+          git add -f CalabiHats-${{ runner.os }}.zip
+          git commit -q -m "Calabi Hats binaries for ${{ runner.os }} (${{ github.sha }})"
+          git push -f origin HEAD:dist-${{ runner.os }}
