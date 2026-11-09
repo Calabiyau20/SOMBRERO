@@ -341,7 +341,8 @@ public:
 
             g.setColour (cy::faint);
             g.setFont (juce::Font (juce::FontOptions (8.5f)));
-            g.drawText (rowName (row), { 0, bounds.getY(), labelWidth - 4, bounds.getHeight() },
+            g.drawText (rowName (row),
+                        juce::Rectangle<int> { 0, bounds.getY(), labelWidth - 4, bounds.getHeight() },
                         juce::Justification::centredRight, false);
 
             for (int i = 0; i < 16; ++i)

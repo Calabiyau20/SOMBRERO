@@ -2,13 +2,13 @@
 #include "PluginEditor.h"
 
 using APVTS = juce::AudioProcessorValueTreeState;
-using Range = juce::NormalisableRange<float>;
+using NRange = juce::NormalisableRange<float>;
 
 namespace
 {
-    Range skewed (float lo, float hi, float centre)
+    NRange skewed (float lo, float hi, float centre)
     {
-        Range r (lo, hi);
+        NRange r (lo, hi);
         r.setSkewForCentre (centre);
         return r;
     }
@@ -38,7 +38,7 @@ double CalabiHatsProcessor::beatsPerStep (int divisionIndex)
 APVTS::ParameterLayout CalabiHatsProcessor::createLayout()
 {
     APVTS::ParameterLayout layout;
-    auto add = [&layout] (const char* id, const char* name, Range range, float def, const char* unit = "")
+    auto add = [&layout] (const char* id, const char* name, NRange range, float def, const char* unit = "")
     {
         layout.add (std::make_unique<juce::AudioParameterFloat> (
             juce::ParameterID { id, 1 }, name, range, def,
@@ -49,33 +49,33 @@ APVTS::ParameterLayout CalabiHatsProcessor::createLayout()
     add ("attack",     "Attack",     skewed (0.1f, 60.0f, 4.0f),      0.6f,  "ms");
     add ("decay",      "Decay",      skewed (8.0f, 1400.0f, 150.0f),  110.0f,"ms");
     add ("metalFreq",  "Metal Freq", skewed (40.0f, 4000.0f, 400.0f), 320.0f,"Hz");
-    add ("metalLevel", "Metal Level",Range (0.0f, 1.0f),              0.75f);
+    add ("metalLevel", "Metal Level",NRange (0.0f, 1.0f),              0.75f);
     add ("clickFreq",  "Click Freq", skewed (100.0f, 9000.0f, 1200.0f),1150.0f,"Hz");
-    add ("clickLevel", "Click Level",Range (0.0f, 1.0f),              0.6f);
+    add ("clickLevel", "Click Level",NRange (0.0f, 1.0f),              0.6f);
     add ("hissFreq",   "Hiss Freq",  skewed (500.0f, 16000.0f, 5000.0f),7400.0f,"Hz");
-    add ("hissLevel",  "Hiss Level", Range (0.0f, 1.0f),              0.55f);
+    add ("hissLevel",  "Hiss Level", NRange (0.0f, 1.0f),              0.55f);
     add ("combFreq",   "Comb Freq",  skewed (120.0f, 9000.0f, 1500.0f),2600.0f,"Hz");
-    add ("combFb",     "Comb Feedback", Range (0.0f, 0.92f),          0.42f);
-    add ("combMix",    "Comb Mix",   Range (0.0f, 1.0f),              0.34f);
+    add ("combFb",     "Comb Feedback", NRange (0.0f, 0.92f),          0.42f);
+    add ("combMix",    "Comb Mix",   NRange (0.0f, 1.0f),              0.34f);
     add ("fmFreq",     "FM Freq",    skewed (150.0f, 7000.0f, 1500.0f),1850.0f,"Hz");
     add ("fmDecay",    "FM Decay",   skewed (1.0f, 150.0f, 20.0f),    13.0f, "ms");
     add ("modFreq",    "Mod Freq",   skewed (0.5f, 3200.0f, 300.0f),  430.0f,"Hz");
-    add ("modAmount",  "Mod Amount", Range (0.0f, 1.0f),              0.34f);
-    add ("modMix",     "Mod Mix",    Range (0.0f, 1.0f),              0.26f);
+    add ("modAmount",  "Mod Amount", NRange (0.0f, 1.0f),              0.34f);
+    add ("modMix",     "Mod Mix",    NRange (0.0f, 1.0f),              0.26f);
     add ("filterFreq", "Filter",     skewed (120.0f, 14000.0f, 2000.0f),4230.0f,"Hz");
     add ("filterQ",    "Filter Q",   skewed (0.3f, 9.0f, 1.5f),       0.83f);
-    add ("velSens",    "Vel Sens",   Range (0.0f, 1.0f),              0.72f);
-    add ("width",      "Width",      Range (0.0f, 1.0f),              0.55f);
-    add ("output",     "Output",     Range (0.0f, 1.4f),              0.85f);
+    add ("velSens",    "Vel Sens",   NRange (0.0f, 1.0f),              0.72f);
+    add ("width",      "Width",      NRange (0.0f, 1.0f),              0.55f);
+    add ("output",     "Output",     NRange (0.0f, 1.4f),              0.85f);
 
     // ---- arpeggiator --------------------------------------------------------
     layout.add (std::make_unique<juce::AudioParameterBool>  (juce::ParameterID { "arpOn", 1 }, "Arp On", true));
     layout.add (std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "arpDir", 1 }, "Direction", arpDirections, 0));
     layout.add (std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "arpDiv", 1 }, "Division", divisionNames, 2));
-    add ("arpOctaves", "Octaves", Range (1.0f, 4.0f, 1.0f),  1.0f);
-    add ("arpSteps",   "Steps",   Range (1.0f, 16.0f, 1.0f), 16.0f);
-    add ("arpGate",    "Gate",    Range (0.1f, 2.0f),        0.9f);
-    add ("arpSwing",   "Swing",   Range (0.0f, 0.7f),        0.12f);
+    add ("arpOctaves", "Octaves", NRange (1.0f, 4.0f, 1.0f),  1.0f);
+    add ("arpSteps",   "Steps",   NRange (1.0f, 16.0f, 1.0f), 16.0f);
+    add ("arpGate",    "Gate",    NRange (0.1f, 2.0f),        0.9f);
+    add ("arpSwing",   "Swing",   NRange (0.0f, 0.7f),        0.12f);
 
     // ---- mod lanes -----------------------------------------------------------
     for (int l = 1; l <= 2; ++l)
@@ -84,19 +84,19 @@ APVTS::ParameterLayout CalabiHatsProcessor::createLayout()
         layout.add (std::make_unique<juce::AudioParameterBool>  (juce::ParameterID { "lane" + n + "On", 1 },    "Lane " + n + " On", true));
         layout.add (std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "lane" + n + "Div", 1 },   "Lane " + n + " Division", divisionNames, l == 1 ? 2 : 1));
         layout.add (std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "lane" + n + "Dir", 1 },   "Lane " + n + " Direction", laneDirections, l == 1 ? 0 : 2));
-        layout.add (std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "lane" + n + "Range", 1 }, "Lane " + n + " Range", laneRanges, l == 1 ? 0 : 1));
+        layout.add (std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "lane" + n + "NRange", 1 }, "Lane " + n + " NRange", laneRanges, l == 1 ? 0 : 1));
         layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "lane" + n + "Amount", 1 },"Lane " + n + " Amount",
-                                                                 Range (0.0f, 1.0f), l == 1 ? 0.45f : 0.35f));
+                                                                 NRange (0.0f, 1.0f), l == 1 ? 0.45f : 0.35f));
     }
 
-    add ("velDepth",  "Vel Depth",  Range (0.0f, 1.0f), 0.4f);
-    add ("randDepth", "Rand Depth", Range (0.0f, 1.0f), 0.3f);
+    add ("velDepth",  "Vel Depth",  NRange (0.0f, 1.0f), 0.4f);
+    add ("randDepth", "Rand Depth", NRange (0.0f, 1.0f), 0.3f);
 
     // ---- euclidean generator ---------------------------------------------------
-    add ("euPulses", "Euclid Pulses", Range (1.0f, 16.0f, 1.0f), 5.0f);
-    add ("euSteps",  "Euclid Steps",  Range (2.0f, 16.0f, 1.0f), 16.0f);
-    add ("euRotate", "Euclid Rotate", Range (0.0f, 15.0f, 1.0f), 0.0f);
-    add ("euAccent", "Euclid Accent", Range (0.0f, 1.0f),        0.6f);
+    add ("euPulses", "Euclid Pulses", NRange (1.0f, 16.0f, 1.0f), 5.0f);
+    add ("euSteps",  "Euclid Steps",  NRange (2.0f, 16.0f, 1.0f), 16.0f);
+    add ("euRotate", "Euclid Rotate", NRange (0.0f, 15.0f, 1.0f), 0.0f);
+    add ("euAccent", "Euclid Accent", NRange (0.0f, 1.0f),        0.6f);
 
     return layout;
 }
@@ -224,7 +224,7 @@ float CalabiHatsProcessor::laneValueAt (int laneIndex, double ppq) const
 
     index = juce::jlimit (0, len - 1, index);
     const float raw = pattern.lane[(size_t) laneIndex][(size_t) index].load();
-    const bool bipolar = paramValue (("lane" + n + "Range").toRawUTF8()) > 0.5f;
+    const bool bipolar = paramValue (("lane" + n + "NRange").toRawUTF8()) > 0.5f;
     return bipolar ? raw * 2.0f - 1.0f : raw;
 }
 
