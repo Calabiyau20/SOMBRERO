@@ -1,6 +1,42 @@
 # Messy Hat Tricks — manual installation
 
-No installer: copy the files into the folders below and rescan in your host.
+**The quick way:** double-click `Install-macOS.command`, or right-click
+`Install-Windows.bat` and choose *Run as administrator*. They copy everything
+into place, clear the quarantine flag and restart the Audio Unit registry.
+
+Everything below is the same thing done by hand.
+
+---
+
+## About the macOS warning
+
+This plugin is signed, but not notarized — notarizing needs a paid Apple
+Developer account, and this is free software. Nothing is wrong with the files;
+macOS simply cannot tell who built them.
+
+Two different things are at work, and only the second is yours to clear:
+
+- **The signature.** On Apple Silicon, code with *no* signature at all will not
+  load under any circumstances. Every build here is ad-hoc signed, which
+  satisfies that. You do not have to do anything about it.
+- **The quarantine flag.** Your browser attaches this to anything downloaded.
+  Clearing it is a normal user action — it is how every unnotarized plugin is
+  installed, and the installer script does it for you.
+
+If you prefer to do it by hand, the command is under each table below.
+
+For the **standalone app**, macOS may still refuse the first launch. Open
+System Settings → Privacy & Security, scroll to the bottom, and click
+**Open Anyway** next to the message about Messy Hat Tricks. On macOS 15 and
+later this is the only route — right-click → Open no longer works for
+unnotarized apps.
+
+On **Windows**, SmartScreen shows an "unknown publisher" notice on the first
+run of the standalone: click *More info*, then *Run anyway*.
+
+---
+
+## By hand
 
 ## macOS
 

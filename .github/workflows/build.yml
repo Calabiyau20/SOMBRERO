@@ -77,6 +77,17 @@ jobs:
           cp CMakeLists.txt LICENSE CREDITS.md README.md out/source/
           cp -R scripts out/source/ || true
 
+      - name: Add the installer script (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cp scripts/Install-macOS.command out/
+          chmod +x out/Install-macOS.command
+
+      - name: Add the installer script (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cp scripts/Install-Windows.bat out/
+
       - name: Zip (macOS)
         if: runner.os == 'macOS'
         run: cd out && zip -qry ../MessyHatTricks-macOS.zip . && cd ..
