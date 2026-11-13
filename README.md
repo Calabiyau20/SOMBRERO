@@ -1,78 +1,75 @@
-# Calabi Hats
+# Messy Hat Tricks
 
-Motor de hi-hats de Calabi Yau: capas Metal / Click / Hiss, comb filter, transitorio FM,
-ring modulation, filtro HP con Q y spread estéreo Haas — con arpegiador de 16 pasos
-(On / Pitch / Vel / Prob), generador euclidiano y dos lanes de modulación ruteables
-arrastrando chips sobre cualquier knob.
+A hi-hat engine by **Calabi Yau**. Nothing is sampled: every hit is built from
+three voiced layers, a short FM transient, a tuned comb, ring modulation and a
+high-pass filter, then shaped by its own envelope.
 
-Formatos: **VST3**, **AU (.component)**, **CLAP** y **Standalone**, para **macOS**
-(universal arm64 + x86_64) y **Windows** (x64; en Windows no existe AU).
+- Nine titled voice modules, laid out in the order the signal travels
+- Sixteen-step sequencer with pitch, velocity and **probability per step**
+- Euclidean generator, drawn as the cycle it is
+- Two modulation lanes routed by dragging them onto any knob
+- MIDI output of the notes it generates
+- Band-limited oscillators plus switchable oversampling (1× / 2× / 4×)
+
+Formats: **VST3, Audio Unit, CLAP and standalone**, on macOS (universal,
+Apple Silicon and Intel) and Windows 64-bit.
+
+Installing: see [INSTALL.md](INSTALL.md).
+Licence and credits: see [CREDITS.md](CREDITS.md) and [LICENSE](LICENSE).
 
 ---
 
-## Compilar
+## Building it yourself
 
-Requisitos comunes: CMake 3.22+ y conexión a internet la primera vez (CMake descarga
-JUCE 8.0.4 y clap-juce-extensions solo).
-
-### macOS
+CMake 3.22 or newer, and internet access the first time so it can fetch JUCE
+and clap-juce-extensions.
 
 ```bash
-./scripts/build-mac.sh
+./scripts/build-mac.sh         # macOS: Xcode command line tools
+scripts\build-windows.bat      # Windows: Visual Studio 2022, Desktop C++
 ```
 
-Necesita Xcode Command Line Tools (`xcode-select --install`). El script compila,
-instala los plugins en `~/Library/Audio/Plug-Ins/` y los firma ad-hoc para que
-Ableton y Logic los carguen sin pelear con Gatekeeper.
+Both of these must be set **before** `project()` in `CMakeLists.txt`, because
+CMake resolves the macOS toolchain while running it and silently ignores a value
+set afterwards:
 
-### Windows
-
-```bat
-scripts\build-windows.bat
+```cmake
+set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")
+set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13")
 ```
 
-Necesita Visual Studio 2022 con el workload "Desktop development with C++".
+Getting that wrong stamps the bundles with the build machine's SDK version, and
+macOS then refuses to load them — the symptom is `OpenAComponent: result: -1`
+from `auval`, with `built for macOS 26.0 which is newer than running OS` in
+Console.
 
-### Los dos a la vez, sin tener las dos máquinas
-
-Subí el repo a GitHub y el workflow `.github/workflows/build.yml` compila en
-macOS y Windows en cada push, y deja los binarios como artifacts descargables.
-
----
-
-## Dónde queda cada formato
-
-| Formato | macOS | Windows |
-|---|---|---|
-| VST3 | `~/Library/Audio/Plug-Ins/VST3/Calabi Hats.vst3` | `C:\Program Files\Common Files\VST3\` |
-| AU | `~/Library/Audio/Plug-Ins/Components/Calabi Hats.component` | — |
-| CLAP | `~/Library/Audio/Plug-Ins/CLAP/Calabi Hats.clap` | `C:\Program Files\Common Files\CLAP\` |
-| Standalone | `build/CalabiHats_artefacts/Release/Standalone/` | idem |
-
----
-
-## Estructura
+## Layout
 
 ```
-CMakeLists.txt              JUCE + clap-juce-extensions, los 4 formatos
-Source/Engine.h             DSP de la voz, patrón de 16 pasos, euclidiano
-Source/PluginProcessor.*    parámetros, secuenciador, ruteo de modulación, estado
-Source/PluginEditor.*       interfaz: knobs con drag & drop, grillas, módulos plegables
-Resources/                  logo oficial Calabi Yau
+CMakeLists.txt           JUCE + clap-juce-extensions, the four formats
+Source/Engine.h          the voice DSP, the 16-step pattern, Euclidean maths
+Source/PluginProcessor.* parameters, sequencer, modulation, oversampling, presets
+Source/PluginEditor.*    the window and its layout
+Source/Look.h            palette, materials and the hardware look and feel
+Source/Widgets.h         knobs, modules, the XY pad, the ring, the step grid
+Resources/               the artwork embedded in the binary
 ```
 
-## Cómo funciona
+## How it works
 
-- **Sincronía**: el arpegiador sigue el transporte del host (ppq). En standalone corre libre.
-- **MIDI**: cualquier nota dispara un hit; C3 (60) es el tono base, cada semitono transpone
-  el metal, el click, el hiss y el FM.
-- **Modulación**: las fuentes son LANE 1, LANE 2, VEL y RAND. Se resuelven en el momento del
-  golpe, igual que en el prototipo, así cada hit suena distinto sin smearing.
-- **Estado**: todos los parámetros van por `AudioProcessorValueTreeState` (automatizables),
-  y el patrón, las lanes y los ruteos se guardan en el preset del host.
+**Signal flow.** Metal, click and hiss plus the FM transient are summed, then
+pass through the comb, the high-pass filter, the ring modulator and the stereo
+spread, and the amplitude envelope shapes the result.
 
-## Pendiente antes de distribuir
+**Modulation** resolves at the instant of each hit rather than continuously, so
+two consecutive steps can sound completely different with no smearing between
+them.
 
-- Firmar y notarizar el build de macOS con tu Developer ID (`codesign` + `notarytool`);
-  la firma ad-hoc del script sirve solo en tu máquina.
-- Instalador: `pkgbuild`/`productbuild` en Mac, Inno Setup en Windows.
+**Antialiasing** works on two levels: the six metal oscillators are band-limited
+with PolyBLEP, and the whole voice render can run oversampled, because ring
+modulation and the comb create sum and difference frequencies above Nyquist that
+no BLEP can fix.
+
+**The comb feedback** reaches 97 %. At that setting the loop barely loses energy,
+so the return path is softly saturated: the coefficient is exact at low level and
+compresses instead of running away at high level.

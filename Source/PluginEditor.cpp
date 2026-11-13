@@ -1,23 +1,67 @@
 #include "PluginEditor.h"
-#include "CalabiHatsData.h"
+#include "MessyHatTricksData.h"
 
+//==============================================================================
 namespace cy
 {
-    const juce::Image& brandMark()
+    static juce::Image loadOnce (const char* data, int size)
     {
-        static const juce::Image mark =
-            juce::ImageCache::getFromMemory (CalabiHatsData::calabi_hats_logo_png,
-                                             CalabiHatsData::calabi_hats_logo_pngSize);
-        return mark;
+        return juce::ImageCache::getFromMemory (data, size);
+    }
+
+    const juce::Image& logotype()
+    {
+        static const juce::Image i = loadOnce (MessyData::messylogotype_png, MessyData::messylogotype_pngSize);
+        return i;
+    }
+    const juce::Image& character()
+    {
+        static const juce::Image i = loadOnce (MessyData::messycharacter_png, MessyData::messycharacter_pngSize);
+        return i;
+    }
+    const juce::Image& stars()
+    {
+        static const juce::Image i = loadOnce (MessyData::threestars_png, MessyData::threestars_pngSize);
+        return i;
+    }
+    const juce::Image& malvinas()
+    {
+        static const juce::Image i = loadOnce (MessyData::malvinas_png, MessyData::malvinas_pngSize);
+        return i;
+    }
+    const juce::Image& drumHead()
+    {
+        static const juce::Image i = loadOnce (MessyData::calabi_hats_logo_png, MessyData::calabi_hats_logo_pngSize);
+        return i;
+    }
+    const juce::Image& calabiYau()
+    {
+        static const juce::Image i = loadOnce (MessyData::calabiyaulogotype_png, MessyData::calabiyaulogotype_pngSize);
+        return i;
     }
 }
 
 namespace
 {
-    constexpr int knobWidth = 64, knobHeight = 68;
-    constexpr int headerBand = 74;
+    constexpr int headerBand   = 92;
+    constexpr int footerBand   = 34;
+    constexpr int windowWidth  = 1180;
+    constexpr int windowHeight = 1000;
+    constexpr int gap          = 11;
+    constexpr int filterWidth  = 556;
 
-    /** Parameter display name, safe when the id is missing. */
+    juce::Label* makeCaption (juce::OwnedArray<juce::Label>& store, juce::Component& parent,
+                              const juce::String& text, juce::Colour colour = cy::faint,
+                              float size = 8.0f, juce::Justification just = juce::Justification::centredLeft)
+    {
+        auto* l = store.add (new juce::Label ({}, text));
+        l->setColour (juce::Label::textColourId, colour);
+        l->setFont (juce::Font (juce::FontOptions (size)).boldened());
+        l->setJustificationType (just);
+        parent.addAndMakeVisible (l);
+        return l;
+    }
+
     juce::String nameOf (juce::AudioProcessorValueTreeState& state, const juce::String& id,
                          const juce::String& fallback)
     {
@@ -27,156 +71,32 @@ namespace
         jassertfalse;
         return fallback;
     }
-
-    juce::Label* makeCaption (juce::OwnedArray<juce::Label>& store, juce::Component& parent,
-                              const juce::String& text, juce::Colour colour = cy::faint, float size = 9.0f)
-    {
-        auto* l = store.add (new juce::Label ({}, text));
-        l->setColour (juce::Label::textColourId, colour);
-        l->setFont (juce::Font (juce::FontOptions (size)));
-        l->setJustificationType (juce::Justification::centredLeft);
-        parent.addAndMakeVisible (l);
-        return l;
-    }
 }
 
 //==============================================================================
-CalabiHatsEditor::CalabiHatsEditor (CalabiHatsProcessor& p)
+MessyHatTricksEditor::MessyHatTricksEditor (MessyHatTricksProcessor& p)
     : juce::AudioProcessorEditor (&p), proc (p)
 {
     setLookAndFeel (&lnf);
 
-    logo = cy::brandMark();
-
-    // ---- voice ---------------------------------------------------------------
     buildVoiceModules();
+    buildArp();
+    buildLanes();
 
-    // ---- arpeggiator -----------------------------------------------------------
-    arpOnButton.setClickingTogglesState (true);
-    arpContent.addAndMakeVisible (arpOnButton);
-    buttonAttachments.add (new juce::AudioProcessorValueTreeState::ButtonAttachment (proc.apvts, "arpOn", arpOnButton));
-
-    addCombo (arpContent, "arpDir", "Direction");
-    addCombo (arpContent, "arpDiv", "Division");
-
-    randomNotesButton.onClick = [this] { generateRandomPattern(); };
-    arpContent.addAndMakeVisible (randomNotesButton);
-
-    for (auto id : { "arpOctaves", "arpSteps", "arpGate", "arpSwing" })
-    {
-        auto* k = knobs.add (new KnobBox (proc, id, nameOf (proc.apvts, id, id)));
-        arpContent.addAndMakeVisible (k);
-        arpKnobs.push_back (k);
-    }
-
-    arpContent.addAndMakeVisible (stepGrid);
-
-    makeCaption (labels, arpContent, "EUCLIDEAN GENERATOR", cy::gold, 9.5f)
-        ->setJustificationType (juce::Justification::centred);
-
-    for (auto id : { "euPulses", "euSteps", "euRotate", "euAccent" })
-    {
-        auto* k = knobs.add (new KnobBox (proc, id, nameOf (proc.apvts, id, id).replace ("Euclid ", "")));
-        arpContent.addAndMakeVisible (k);
-        euclidKnobs.push_back (k);
-    }
-
-    euTargetBox.addItemList ({ "Steps on / off", "Velocity", "Probability", "Accents (vel + prob)" }, 1);
-    euTargetBox.setSelectedId (1, juce::dontSendNotification);
-    arpContent.addAndMakeVisible (euTargetBox);
-
-    generateButton.onClick = [this] { generateEuclid(); };
-    arpContent.addAndMakeVisible (generateButton);
-
-    euclidReadout.setColour (juce::Label::textColourId, cy::gold);
-    euclidReadout.setFont (juce::Font (juce::FontOptions (9.5f)));
-    euclidReadout.setJustificationType (juce::Justification::centred);
-    arpContent.addAndMakeVisible (euclidReadout);
-
-    // ---- lanes -------------------------------------------------------------------
-    static const juce::StringArray toolNames { "Random", "Ramp", "Euclid", "Reverse", "Mirror", "Half", "Clear" };
-
-    for (int l = 0; l < 2; ++l)
-    {
-        const auto n = juce::String (l + 1);
-
-        auto* chip = chips.add (new SourceChip (l));
-        laneContent.addAndMakeVisible (chip);
-
-        auto* onButton = buttons.add (new juce::TextButton ("ON"));
-        onButton->setClickingTogglesState (true);
-        laneContent.addAndMakeVisible (onButton);
-        if (proc.apvts.getParameter ("lane" + n + "On") != nullptr)
-            buttonAttachments.add (new juce::AudioProcessorValueTreeState::ButtonAttachment (
-                proc.apvts, "lane" + n + "On", *onButton));
-
-        addCombo (laneContent, "lane" + n + "Div", "Division");
-        addCombo (laneContent, "lane" + n + "Dir", "Direction");
-        addCombo (laneContent, "lane" + n + "Range", "Range");
-
-        auto* amount = knobs.add (new KnobBox (proc, "lane" + n + "Amount", "Amount"));
-        laneContent.addAndMakeVisible (amount);
-        laneAmount[(size_t) l] = amount;
-
-        laneBars.add (new LaneBars (proc, l));
-        laneContent.addAndMakeVisible (laneBars.getLast());
-
-        for (int t = 0; t < toolNames.size(); ++t)
-        {
-            auto* b = buttons.add (new juce::TextButton (toolNames[t]));
-            b->onClick = [this, l, t] { applyLaneTool (l, t); };
-            laneContent.addAndMakeVisible (b);
-        }
-    }
-
-    // ---- mod sources -----------------------------------------------------------------
-    for (int s = 0; s < 4; ++s)
-    {
-        auto* chip = chips.add (new SourceChip (s));
-        sourceContent.addAndMakeVisible (chip);
-    }
-
-    for (auto id : { "velDepth", "randDepth" })
-    {
-        auto* k = knobs.add (new KnobBox (proc, id, juce::String (id) == "velDepth" ? "Vel depth" : "Rand depth"));
-        sourceContent.addAndMakeVisible (k);
-        depthKnobs.push_back (k);
-    }
-
-    makeCaption (labels, sourceContent,
-                 "Drag a chip onto any knob to route it. The outer ring shows the depth; "
-                 "click the coloured dot under a knob to remove that routing.", cy::faint, 10.0f);
-
-    // ---- MIDI output ---------------------------------------------------------
-    midiOutButton.setClickingTogglesState (true);
-    arpContent.addAndMakeVisible (midiOutButton);
-    if (proc.apvts.getParameter ("midiOut") != nullptr)
-        buttonAttachments.add (new juce::AudioProcessorValueTreeState::ButtonAttachment (
-            proc.apvts, "midiOut", midiOutButton));
-
-    midiChannelBox = combos.add (new juce::ComboBox());
-    if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter ("midiChannel")))
-        midiChannelBox->addItemList (choice->choices, 1);
-    arpContent.addAndMakeVisible (midiChannelBox);
-    if (proc.apvts.getParameter ("midiChannel") != nullptr)
-        comboAttachments.add (new juce::AudioProcessorValueTreeState::ComboBoxAttachment (
-            proc.apvts, "midiChannel", *midiChannelBox));
-
-    midiChannelLabel = makeCaption (labels, arpContent, "CH");
-
-    midiRootKnob = knobs.add (new KnobBox (proc, "midiRoot", "MIDI note"));
-    arpContent.addAndMakeVisible (midiRootKnob);
-
+    // ---- header -------------------------------------------------------------
+    saveButton.onClick = [this] { savePreset(); };
+    loadButton.onClick = [this] { loadPreset(); };
     triggerButton.onClick = [this] { proc.triggerManualHit (1.0f, 0); };
-    addAndMakeVisible (triggerButton);
+    for (auto* b : { &saveButton, &loadButton, &triggerButton })
+        addAndMakeVisible (b);
 
-    // ---- sections --------------------------------------------------------------------
-    voiceSection  = std::make_unique<Section> ("E-Hat Voice", voiceContent, 450);
-    arpSection    = std::make_unique<Section> ("Arpeggiator", arpContent, 268);
-    laneSection   = std::make_unique<Section> ("Mod Lanes", laneContent, 292);
-    sourceSection = std::make_unique<Section> ("Mod Sources", sourceContent, 86);
+    // ---- sections -----------------------------------------------------------
+    voiceSection  = std::make_unique<Section> ("E-Hat Voice", voiceContent, 250);
+    filterSection = std::make_unique<Section> ("9 · High-pass filter", filterContent, 236);
+    laneSection   = std::make_unique<Section> ("Mod lanes & sources", laneContent, 236);
+    arpSection    = std::make_unique<Section> ("Arpeggiator", arpContent, 330);
 
-    for (auto* s : { voiceSection.get(), arpSection.get(), laneSection.get(), sourceSection.get() })
+    for (auto* s : { voiceSection.get(), filterSection.get(), laneSection.get(), arpSection.get() })
     {
         s->onFoldChanged = [this] { layoutSections(); };
         holder.addAndMakeVisible (s);
@@ -186,19 +106,53 @@ CalabiHatsEditor::CalabiHatsEditor (CalabiHatsProcessor& p)
     viewport.setScrollBarsShown (true, false);
     addAndMakeVisible (viewport);
 
+    addChildComponent (info);
+
     setResizable (true, true);
-    setResizeLimits (860, 520, 1900, 1500);
-    setSize (1000, 820);
-    startTimerHz (30);
+    setResizeLimits (980, 560, 2000, 1700);
+    setSize (windowWidth, windowHeight);
+    startTimerHz (24);
 }
 
-CalabiHatsEditor::~CalabiHatsEditor()
+MessyHatTricksEditor::~MessyHatTricksEditor()
 {
     setLookAndFeel (nullptr);
 }
 
 //==============================================================================
-void CalabiHatsEditor::buildVoiceModules()
+juce::ComboBox* MessyHatTricksEditor::addCombo (juce::Component& parent, const juce::String& paramID,
+                                                const juce::String& caption)
+{
+    auto* box = combos.add (new juce::ComboBox());
+    auto* parameter = proc.apvts.getParameter (paramID);
+    jassert (parameter != nullptr);
+
+    if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (parameter))
+        box->addItemList (choice->choices, 1);
+
+    parent.addAndMakeVisible (box);
+
+    if (parameter != nullptr)
+        comboAttachments.add (new juce::AudioProcessorValueTreeState::ComboBoxAttachment (
+            proc.apvts, paramID, *box));
+    else
+        box->setEnabled (false);
+
+    if (caption.isNotEmpty())
+        makeCaption (captions, parent, caption.toUpperCase());
+
+    return box;
+}
+
+juce::TextButton* MessyHatTricksEditor::addButton (juce::Component& parent, const juce::String& text)
+{
+    auto* b = buttons.add (new juce::TextButton (text));
+    parent.addAndMakeVisible (b);
+    return b;
+}
+
+//==============================================================================
+void MessyHatTricksEditor::buildVoiceModules()
 {
     struct Spec
     {
@@ -211,14 +165,14 @@ void CalabiHatsEditor::buildVoiceModules()
     // In the order the signal actually travels through the voice.
     const std::vector<Spec> specs
     {
-        { "1 · METAL",    "The body — six squares in 808 ratios", cy::lane1,  { ch::dMetalFreq, ch::dMetalLevel } },
-        { "2 · CLICK",    "The attack — a filtered noise burst",  cy::randCol,{ ch::dClickFreq, ch::dClickLevel } },
-        { "3 · HISS",     "The air — high-passed noise",          cy::lane2,  { ch::dHissFreq,  ch::dHissLevel } },
-        { "4 · FM HIT",   "The metallic transient",               cy::velCol, { ch::dFmFreq,    ch::dFmDecay } },
-        { "5 · COMB",     "Tuned metallic resonance",             cy::azure,  { ch::dCombFreq,  ch::dCombFb, ch::dCombMix } },
-        { "6 · RING MOD", "Inharmonic colour",                    cy::orchid, { ch::dModFreq,   ch::dModAmount, ch::dModMix } },
-        { "7 · ENVELOPE", "How the hit opens and dies",           cy::gold,   { ch::dAttack,    ch::dDecay } },
-        { "8 · OUTPUT",   "Dynamics, stereo and level",           cy::steel,  { ch::dVelSens,   ch::dWidth, ch::dOutput } }
+        { "1 · METAL",    "The body — six 808 squares",   cy::lane1,  { ch::dMetalFreq, ch::dMetalLevel } },
+        { "2 · CLICK",    "The attack — filtered noise",  cy::randCol,{ ch::dClickFreq, ch::dClickLevel } },
+        { "3 · HISS",     "The air — high-passed noise",  cy::lane2,  { ch::dHissFreq,  ch::dHissLevel } },
+        { "4 · FM HIT",   "The metallic transient",       cy::velCol, { ch::dFmFreq,    ch::dFmDecay } },
+        { "5 · COMB",     "Tuned metallic resonance",     cy::azure,  { ch::dCombFreq,  ch::dCombFb, ch::dCombMix } },
+        { "6 · RING MOD", "Inharmonic colour",            cy::orchid, { ch::dModFreq,   ch::dModAmount, ch::dModMix } },
+        { "7 · ENVELOPE", "How the hit opens and dies",   cy::gold,   { ch::dAttack,    ch::dDecay } },
+        { "8 · OUTPUT",   "Dynamics, stereo and level",   cy::steel,  { ch::dVelSens,   ch::dWidth, ch::dOutput } }
     };
 
     for (const auto& spec : specs)
@@ -229,54 +183,186 @@ void CalabiHatsEditor::buildVoiceModules()
         std::vector<KnobBox*> inside;
         for (int dest : spec.dests)
         {
-            auto* k = knobs.add (new KnobBox (proc, dest, ch::destParamIDs()[dest], ch::destNames()[dest]));
+            auto* k = knobs.add (new KnobBox (proc, dest, ch::destParamIDs()[dest],
+                                              ch::destNames()[dest], spec.colour));
             box->addAndMakeVisible (k);
             inside.push_back (k);
         }
         moduleKnobs.push_back (inside);
     }
 
-    // The filter is its own module: a pad, not knobs.
-    auto* filterBox = modules.add (new ModuleBox ("9 · HIGH-PASS FILTER",
-                                                  "Where the hat sits above the kick",
-                                                  cy::neon));
-    voiceContent.addAndMakeVisible (filterBox);
-    moduleKnobs.push_back ({});
-
     filterPad = std::make_unique<FilterPad> (proc);
-    filterBox->addAndMakeVisible (filterPad.get());
+    filterContent.addAndMakeVisible (filterPad.get());
 }
 
-KnobBox* CalabiHatsEditor::addKnob (juce::Component& parent, int dest)
+void MessyHatTricksEditor::buildArp()
 {
-    auto* k = knobs.add (new KnobBox (proc, dest, ch::destParamIDs()[dest], ch::destNames()[dest]));
-    parent.addAndMakeVisible (k);
-    return k;
+    arpOnButton.setClickingTogglesState (true);
+    arpOnButton.setColour (juce::TextButton::buttonOnColourId, cy::electric);
+    arpContent.addAndMakeVisible (arpOnButton);
+    if (proc.apvts.getParameter ("arpOn") != nullptr)
+        buttonAttachments.add (new juce::AudioProcessorValueTreeState::ButtonAttachment (
+            proc.apvts, "arpOn", arpOnButton));
+
+    arpDirBox = addCombo (arpContent, "arpDir", "Direction");
+    dirCaption = captions.getLast();
+    arpDivBox = addCombo (arpContent, "arpDiv", "Division");
+    divCaption = captions.getLast();
+
+    randomNotesButton.onClick = [this] { generateRandomPattern(); };
+    arpContent.addAndMakeVisible (randomNotesButton);
+
+    midiOutButton.setClickingTogglesState (true);
+    midiOutButton.setColour (juce::TextButton::buttonOnColourId, cy::neon);
+    arpContent.addAndMakeVisible (midiOutButton);
+    if (proc.apvts.getParameter ("midiOut") != nullptr)
+        buttonAttachments.add (new juce::AudioProcessorValueTreeState::ButtonAttachment (
+            proc.apvts, "midiOut", midiOutButton));
+
+    midiChannelBox = addCombo (arpContent, "midiChannel", "Ch");
+    chCaption = captions.getLast();
+
+    for (auto id : { "arpOctaves", "arpSteps", "arpGate", "arpSwing" })
+        arpKnobs.push_back (knobs.add (new KnobBox (proc, id, nameOf (proc.apvts, id, id), cy::gold)));
+
+    arpKnobs.push_back (knobs.add (new KnobBox (proc, "midiRoot", "MIDI note", cy::neon)));
+
+    for (auto* k : arpKnobs)
+        arpContent.addAndMakeVisible (k);
+
+    arpContent.addAndMakeVisible (stepGrid);
+    hintCaption = makeCaption (captions, arpContent,
+        "Tap a cell in ON to switch a step on or off; "
+        "drag vertically over Pitch, Vel and Prob to draw them.", cy::faint, 9.5f);
+
+    euCaption = makeCaption (captions, arpContent, "EUCLIDEAN GENERATOR", cy::gold, 9.0f,
+                             juce::Justification::centred);
+
+    euclidRing = std::make_unique<EuclidRing> (proc);
+    arpContent.addAndMakeVisible (euclidRing.get());
+
+    for (auto id : { "euPulses", "euSteps", "euRotate", "euAccent" })
+    {
+        auto* k = knobs.add (new KnobBox (proc, id, nameOf (proc.apvts, id, id).replace ("Euclid ", ""), cy::gold));
+        arpContent.addAndMakeVisible (k);
+        euclidKnobs.push_back (k);
+    }
+
+    euTargetBox.addItemList ({ "Steps on / off", "Velocity", "Probability", "Accents (vel + prob)" }, 1);
+    euTargetBox.setSelectedId (1, juce::dontSendNotification);
+    arpContent.addAndMakeVisible (euTargetBox);
+
+    generateButton.onClick = [this] { generateEuclid(); };
+    generateButton.setColour (juce::TextButton::buttonColourId, cy::gold);
+    generateButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xff241603));
+    arpContent.addAndMakeVisible (generateButton);
 }
 
-void CalabiHatsEditor::addCombo (juce::Component& parent, const juce::String& paramID, const juce::String& label)
+void MessyHatTricksEditor::buildLanes()
 {
-    auto* box = combos.add (new juce::ComboBox());
-    auto* parameter = proc.apvts.getParameter (paramID);
-    jassert (parameter != nullptr);   // a missing id must never take the editor down
+    static const juce::StringArray toolNames { "Random", "Ramp", "Euclid", "Reverse", "Mirror", "Half", "Clear" };
 
-    if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (parameter))
-        box->addItemList (choice->choices, 1);
+    for (int l = 0; l < 2; ++l)
+    {
+        const auto n = juce::String (l + 1);
+        auto& ui = lanes[(size_t) l];
 
-    parent.addAndMakeVisible (box);
+        ui.chip = chips.add (new SourceChip (l));
+        laneContent.addAndMakeVisible (ui.chip);
 
-    if (parameter != nullptr)
-        comboAttachments.add (new juce::AudioProcessorValueTreeState::ComboBoxAttachment (proc.apvts, paramID, *box));
-    else
-        box->setEnabled (false);
+        ui.onButton = addButton (laneContent, "On");
+        ui.onButton->setClickingTogglesState (true);
+        ui.onButton->setColour (juce::TextButton::buttonOnColourId, l == 0 ? cy::lane1 : cy::lane2);
+        if (proc.apvts.getParameter ("lane" + n + "On") != nullptr)
+            buttonAttachments.add (new juce::AudioProcessorValueTreeState::ButtonAttachment (
+                proc.apvts, "lane" + n + "On", *ui.onButton));
 
-    auto* caption = makeCaption (labels, parent, label.toUpperCase());
-    caption->setComponentID ("caption:" + paramID);
-    juce::ignoreUnused (caption);
+        ui.div   = addCombo (laneContent, "lane" + n + "Div", {});
+        ui.dir   = addCombo (laneContent, "lane" + n + "Dir", {});
+        ui.range = addCombo (laneContent, "lane" + n + "Range", {});
+
+        ui.amount = knobs.add (new KnobBox (proc, "lane" + n + "Amount", "Amount",
+                                            l == 0 ? cy::lane1 : cy::lane2));
+        laneContent.addAndMakeVisible (ui.amount);
+
+        ui.bars = new LaneBars (proc, l);
+        laneContent.addAndMakeVisible (ui.bars);
+        barsOwner.add (ui.bars);
+
+        for (int t = 0; t < toolNames.size(); ++t)
+        {
+            auto* b = addButton (laneContent, toolNames[t]);
+            b->onClick = [this, l, t] { applyLaneTool (l, t); };
+            ui.tools.push_back (b);
+        }
+    }
+
+    dragCaption = makeCaption (captions, laneContent,
+        "DRAG ONTO ANY KNOB  " + juce::String (juce::CharPointer_UTF8 ("\xe2\x86\x92")));
+
+    for (int s = 0; s < 4; ++s)
+        laneContent.addAndMakeVisible (chips.add (new SourceChip (s)));
+
+    for (auto id : { "velDepth", "randDepth" })
+    {
+        auto* k = knobs.add (new KnobBox (proc, id,
+                                          juce::String (id) == "velDepth" ? "Vel" : "Rand",
+                                          juce::String (id) == "velDepth" ? cy::velCol : cy::randCol));
+        laneContent.addAndMakeVisible (k);
+        depthKnobs.push_back (k);
+    }
 }
 
 //==============================================================================
-void CalabiHatsEditor::generateRandomPattern()
+void MessyHatTricksEditor::savePreset()
+{
+    chooser = std::make_unique<juce::FileChooser> (
+        "Save this preset", MessyHatTricksProcessor::presetFolder(), "*.messyhat");
+
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode
+                            | juce::FileBrowserComponent::warnAboutOverwriting,
+        [this] (const juce::FileChooser& fc)
+        {
+            auto file = fc.getResult();
+            if (file == juce::File())
+                return;
+
+            if (! file.hasFileExtension ("messyhat"))
+                file = file.withFileExtension ("messyhat");
+
+            const auto result = proc.savePresetTo (file);
+            if (result.failed())
+                juce::NativeMessageBox::showMessageBoxAsync (
+                    juce::MessageBoxIconType::WarningIcon, "Could not save", result.getErrorMessage());
+
+            repaint();
+        });
+}
+
+void MessyHatTricksEditor::loadPreset()
+{
+    chooser = std::make_unique<juce::FileChooser> (
+        "Open a preset", MessyHatTricksProcessor::presetFolder(), "*.messyhat");
+
+    chooser->launchAsync (juce::FileBrowserComponent::openMode
+                            | juce::FileBrowserComponent::canSelectFiles,
+        [this] (const juce::FileChooser& fc)
+        {
+            const auto file = fc.getResult();
+            if (file == juce::File())
+                return;
+
+            const auto result = proc.loadPresetFrom (file);
+            if (result.failed())
+                juce::NativeMessageBox::showMessageBoxAsync (
+                    juce::MessageBoxIconType::WarningIcon, "Could not open", result.getErrorMessage());
+
+            repaint();
+        });
+}
+
+//==============================================================================
+void MessyHatTricksEditor::generateRandomPattern()
 {
     auto& r = juce::Random::getSystemRandom();
 
@@ -291,7 +377,7 @@ void CalabiHatsEditor::generateRandomPattern()
     stepGrid.repaint();
 }
 
-void CalabiHatsEditor::generateEuclid()
+void MessyHatTricksEditor::generateEuclid()
 {
     const int pulses = (int) proc.apvts.getRawParameterValue ("euPulses")->load();
     const int steps  = (int) proc.apvts.getRawParameterValue ("euSteps")->load();
@@ -318,7 +404,7 @@ void CalabiHatsEditor::generateEuclid()
     stepGrid.repaint();
 }
 
-void CalabiHatsEditor::applyLaneTool (int lane, int tool)
+void MessyHatTricksEditor::applyLaneTool (int lane, int tool)
 {
     auto& values = proc.pattern.lane[(size_t) lane];
     auto& r = juce::Random::getSystemRandom();
@@ -342,260 +428,327 @@ void CalabiHatsEditor::applyLaneTool (int lane, int tool)
         default: for (int i = 0; i < 16; ++i) values[(size_t) i] = 0.0f; break;
     }
 
-    laneBars[lane]->repaint();
+    if (auto* bars = lanes[(size_t) lane].bars)
+        bars->repaint();
 }
 
 //==============================================================================
-void CalabiHatsEditor::timerCallback()
+void MessyHatTricksEditor::timerCallback()
 {
     stepGrid.repaint();
 
-    const int pulses = juce::jmin ((int) proc.apvts.getRawParameterValue ("euPulses")->load(),
-                                   (int) proc.apvts.getRawParameterValue ("euSteps")->load());
-    euclidReadout.setText ("E(" + juce::String (pulses) + ", "
-                            + juce::String ((int) proc.apvts.getRawParameterValue ("euSteps")->load())
-                            + ")  ROT " + juce::String ((int) proc.apvts.getRawParameterValue ("euRotate")->load()),
-                           juce::dontSendNotification);
-
     for (auto* k : knobs)
         k->repaint();
+
+    // the preset name and the meter live in the header
+    repaint (0, 0, getWidth(), headerBand);
 }
 
 //==============================================================================
-void CalabiHatsEditor::paint (juce::Graphics& g)
+void MessyHatTricksEditor::mouseDown (const juce::MouseEvent& e)
 {
-    g.fillAll (cy::voidBg);
-
-    g.setGradientFill ({ juce::Colour (0xff241048).withAlpha (0.85f), (float) getWidth() * 0.5f, -120.0f,
-                         cy::voidBg.withAlpha (0.0f), (float) getWidth() * 0.5f, 360.0f, true });
-    g.fillRect (getLocalBounds());
-
-    // the isologo, very faint, watermarking the plate behind the rack
-    if (logo.isValid())
+    if (faceBounds.contains (e.getPosition()))
     {
-        const float size = (float) juce::jmin (getWidth(), getHeight()) * 0.62f;
-        g.setOpacity (0.045f);
-        g.drawImage (logo,
-                     juce::Rectangle<float> ((float) getWidth() - size * 0.72f,
-                                             (float) getHeight() - size * 0.78f, size, size),
+        info.setVisible (true);
+        info.toFront (false);
+    }
+}
+
+//==============================================================================
+void MessyHatTricksEditor::paint (juce::Graphics& g)
+{
+    auto all = getLocalBounds();
+
+    cy::brushed (g, all);
+
+    // the drum head, very faint, watermarking the chassis
+    if (const auto& mark = cy::drumHead(); mark.isValid())
+    {
+        const float size = (float) juce::jmin (getWidth(), getHeight()) * 0.55f;
+        g.setOpacity (0.04f);
+        g.drawImage (mark, juce::Rectangle<float> ((float) getWidth() - size * 0.72f,
+                                                   (float) getHeight() - size * 0.80f, size, size),
                      juce::RectanglePlacement::centred);
         g.setOpacity (1.0f);
     }
 
-    // header band
-    auto band = getLocalBounds().removeFromTop (headerBand);
-    g.setColour (cy::panel.withAlpha (0.92f));
-    g.fillRect (band);
-    g.setColour (cy::line);
+    // ---- header band ---------------------------------------------------------
+    auto band = all.withHeight (headerBand);
+    cy::brushed (g, band);
+    g.setColour (juce::Colours::black.withAlpha (0.6f));
     g.drawLine (0.0f, (float) headerBand - 0.5f, (float) getWidth(), (float) headerBand - 0.5f, 1.0f);
 
-    auto header = band.reduced (16, 9);
+    cy::screw (g, { 13.0f, 13.0f });
+    cy::screw (g, { (float) getWidth() - 13.0f, 13.0f });
 
-    if (logo.isValid())
+    auto header = band.reduced (18, 9);
+
+    if (const auto& face = cy::character(); face.isValid())
     {
-        auto logoArea = header.removeFromLeft (56).toFloat();
-        g.drawImage (logo, logoArea, juce::RectanglePlacement::centred);
-        header.removeFromLeft (12);
+        faceBounds = header.removeFromLeft (74);
+        g.drawImage (face, faceBounds.toFloat(), juce::RectanglePlacement::centred);
+        header.removeFromLeft (10);
     }
 
-    g.setColour (cy::ink);
-    g.setFont (juce::Font (juce::FontOptions (24.0f)).boldened());
-    g.drawText ("CALABI HATS", header.removeFromTop (28), juce::Justification::centredLeft, false);
+    if (const auto& lg = cy::logotype(); lg.isValid())
+    {
+        auto area = header.removeFromLeft (96).toFloat();
+        g.drawImage (lg, area, juce::RectanglePlacement::centred);
+        header.removeFromLeft (14);
 
+        g.setColour (juce::Colours::white.withAlpha (0.14f));
+        g.drawLine ((float) header.getX() - 7.0f, (float) header.getY() + 6.0f,
+                    (float) header.getX() - 7.0f, (float) header.getBottom() - 6.0f, 1.0f);
+        header.removeFromLeft (6);
+    }
+
+    // the preset display sits beside the Save and Load buttons
+    auto lcd = header.removeFromLeft (390).withSizeKeepingCentre (390, 28);
+    lcd.removeFromLeft (190);
+    cy::sunken (g, lcd, 4.0f);
+    g.setColour (cy::gold.withAlpha (0.16f));
+    g.drawRoundedRectangle (lcd.toFloat().reduced (0.5f), 4.0f, 1.0f);
     g.setColour (cy::gold);
-    g.setFont (juce::Font (juce::FontOptions (9.5f)));
-    g.drawText ("HI-HAT ENGINE  ·  CALABI YAU", header, juce::Justification::centredLeft, false);
+    g.setFont (juce::Font (juce::FontOptions (11.0f)));
+    g.drawText (proc.presetName(), lcd.reduced (10, 0), juce::Justification::centredLeft, false);
 
-    // output meter
-    auto meter = getLocalBounds().removeFromTop (headerBand).removeFromRight (160).reduced (16, 32);
-    g.setColour (cy::slot);
-    g.fillRect (meter);
-    g.setColour (cy::line);
-    g.drawRect (meter, 1);
+    // ---- meter and the label mark --------------------------------------------
+    auto right = band.reduced (18, 0);
+
+    if (const auto& cyl = cy::calabiYau(); cyl.isValid())
+    {
+        auto area = right.removeFromRight (124).toFloat().withSizeKeepingCentre (124.0f, 46.0f);
+        g.drawImage (cyl, area, juce::RectanglePlacement::centred);
+        right.removeFromRight (16);
+    }
+
+    auto meter = right.removeFromRight (120).withSizeKeepingCentre (120, 9);
+    cy::sunken (g, meter, 2.0f);
     const float level = juce::jlimit (0.0f, 1.0f, proc.uiLevel.load() * 1.4f);
-    g.setColour (cy::lane2);
-    g.fillRect (meter.reduced (1).withWidth (juce::roundToInt ((float) (meter.getWidth() - 2) * level)));
+    if (level > 0.001f)
+    {
+        auto lit = meter.reduced (1).withWidth (juce::roundToInt ((float) (meter.getWidth() - 2) * level));
+        g.setGradientFill ({ cy::lane2, (float) lit.getX(), 0.0f, cy::neon, (float) lit.getRight(), 0.0f, false });
+        g.fillRect (lit);
+    }
+
+    // ---- footer: the three stars between two hairlines -----------------------
+    auto footer = all.removeFromBottom (footerBand);
+    g.setColour (juce::Colours::black.withAlpha (0.35f));
+    g.fillRect (footer);
+    g.setColour (juce::Colours::white.withAlpha (0.07f));
+    g.drawLine ((float) footer.getX(), (float) footer.getY() + 0.5f,
+                (float) footer.getRight(), (float) footer.getY() + 0.5f, 1.0f);
+
+    if (const auto& st = cy::stars(); st.isValid())
+    {
+        const float h = 19.0f;
+        const float w = h * (float) st.getWidth() / (float) juce::jmax (1, st.getHeight());
+        auto art = juce::Rectangle<float> (w, h).withCentre (footer.getCentre().toFloat());
+
+        g.setOpacity (0.62f);
+        g.drawImage (st, art, juce::RectanglePlacement::centred);
+        g.setOpacity (1.0f);
+
+        const float y = footer.getCentreY();
+        for (int side = 0; side < 2; ++side)
+        {
+            const float x0 = side == 0 ? art.getX() - 20.0f : art.getRight() + 20.0f;
+            const float x1 = side == 0 ? art.getX() - 200.0f : art.getRight() + 200.0f;
+            g.setGradientFill ({ cy::gold.withAlpha (0.32f), x0, y,
+                                 cy::gold.withAlpha (0.0f), x1, y, false });
+            g.drawLine (x0, y, x1, y, 1.0f);
+        }
+    }
 }
 
-void CalabiHatsEditor::resized()
+void MessyHatTricksEditor::resized()
 {
-    triggerButton.setBounds (getWidth() - 262, 26, 82, 26);
-    viewport.setBounds (getLocalBounds().withTrimmedTop (headerBand));
+    auto band = getLocalBounds().withHeight (headerBand).reduced (18, 9);
+    band.removeFromLeft (74 + 10 + 96 + 14 + 6);
+    auto buttonsRow = band.removeFromLeft (190).withSizeKeepingCentre (190, 28);
+    saveButton.setBounds (buttonsRow.removeFromLeft (86));
+    buttonsRow.removeFromLeft (8);
+    loadButton.setBounds (buttonsRow.removeFromLeft (86));
+
+    auto rightRow = getLocalBounds().withHeight (headerBand).reduced (18, 0);
+    rightRow.removeFromRight (124 + 16 + 120 + 16);
+    triggerButton.setBounds (rightRow.removeFromRight (92).withSizeKeepingCentre (92, 28));
+
+    viewport.setBounds (getLocalBounds().withTrimmedTop (headerBand).withTrimmedBottom (footerBand));
+    info.setBounds (getLocalBounds());
     layoutSections();
 }
 
-void CalabiHatsEditor::layoutSections()
+//==============================================================================
+void MessyHatTricksEditor::layoutSections()
 {
+    const int contentWidth = juce::jmax (700, viewport.getMaximumVisibleWidth()) - 28;
+
+    // the voice grid is four modules wide; its height follows the rows it needs
+    const int columns = juce::jmax (2, juce::jmin (4, contentWidth / 240));
+    const int rows = (modules.size() + columns - 1) / columns;
+    const int moduleHeight = ModuleBox::headerHeight + KnobBox::height + 6;
+    voiceSection->setContentHeight (rows * moduleHeight + (rows - 1) * gap);
+
     int total = 12;
-    for (auto* s : { voiceSection.get(), arpSection.get(), laneSection.get(), sourceSection.get() })
-        if (s != nullptr)
-            total += s->preferredHeight() + 12;
+    for (auto* s : { voiceSection.get(), filterSection.get(), laneSection.get(), arpSection.get() })
+        total += s->preferredHeight() + gap;
+
+    // the filter and the lanes share a row, so only the taller one counts
+    total -= juce::jmin (filterSection->preferredHeight(), laneSection->preferredHeight()) + gap;
 
     holder.setSize (juce::jmax (700, viewport.getMaximumVisibleWidth()), total);
 
-    auto area = holder.getLocalBounds().reduced (16, 0).withTrimmedTop (12);
+    auto area = holder.getLocalBounds().reduced (14, 0).withTrimmedTop (12);
 
-    for (auto* s : { voiceSection.get(), arpSection.get(), laneSection.get(), sourceSection.get() })
+    voiceSection->setBounds (area.removeFromTop (voiceSection->preferredHeight()));
+    area.removeFromTop (gap);
+
     {
-        if (s == nullptr)
-            continue;
-
-        s->setBounds (area.removeFromTop (s->preferredHeight()));
-        area.removeFromTop (12);
-        s->resized();
+        const int rowHeight = juce::jmax (filterSection->preferredHeight(), laneSection->preferredHeight());
+        auto row = area.removeFromTop (rowHeight);
+        const int left = juce::jmin (filterWidth, row.getWidth() / 2);
+        filterSection->setBounds (row.removeFromLeft (left));
+        row.removeFromLeft (gap);
+        laneSection->setBounds (row);
+        area.removeFromTop (gap);
     }
 
-    //== voice ===============================================================
+    arpSection->setBounds (area.removeFromTop (arpSection->preferredHeight()));
+
+    for (auto* s : { voiceSection.get(), filterSection.get(), laneSection.get(), arpSection.get() })
+        s->resized();
+
+    //== voice ==================================================================
     {
         auto bounds = voiceContent.getLocalBounds();
-        const int gap = 10;
-        const int moduleHeight = ModuleBox::headerHeight + knobHeight + 8;
-        const int filterHeight = ModuleBox::headerHeight + 150 + 8;
-
-        int x = bounds.getX(), y = bounds.getY(), rowHeight = 0;
-
-        auto place = [&] (ModuleBox* box, int width, int height)
-        {
-            if (x > bounds.getX() && x + width > bounds.getRight())
-            {
-                x = bounds.getX();
-                y += rowHeight + gap;
-                rowHeight = 0;
-            }
-
-            box->setBounds (x, y, width, height);
-            x += width + gap;
-            rowHeight = juce::jmax (rowHeight, height);
-        };
+        const int cellW = (bounds.getWidth() - (columns - 1) * gap) / columns;
 
         for (int m = 0; m < modules.size(); ++m)
         {
-            auto* box = modules[m];
+            const int col = m % columns, row = m / columns;
+            juce::Rectangle<int> cell (bounds.getX() + col * (cellW + gap),
+                                       bounds.getY() + row * (moduleHeight + gap),
+                                       cellW, moduleHeight);
+            modules[m]->setBounds (cell);
+
             const auto& inside = moduleKnobs[(size_t) m];
-
-            if (inside.empty())    // the filter pad
-            {
-                place (box, juce::jmax (300, bounds.getWidth() / 2 - gap), filterHeight);
-                filterPad->setBounds (box->contentArea());
-                continue;
-            }
-
-            const int width = (int) inside.size() * knobWidth + 20;
-            place (box, width, moduleHeight);
-
-            auto inner = box->contentArea();
+            auto inner = modules[m]->contentArea();
+            const int span = (int) inside.size() * KnobBox::width;
+            inner = inner.withSizeKeepingCentre (span, inner.getHeight());
             for (auto* k : inside)
-                k->setBounds (inner.removeFromLeft (knobWidth));
+                k->setBounds (inner.removeFromLeft (KnobBox::width));
         }
     }
 
-    //== arp =================================================================
-    {
-        auto bounds = arpContent.getLocalBounds();
-        auto right = bounds.removeFromRight (juce::jmin (220, bounds.getWidth() / 3));
-        bounds.removeFromRight (12);
+    //== filter =================================================================
+    filterPad->setBounds (filterContent.getLocalBounds());
 
-        auto top = bounds.removeFromTop (40);
-        arpOnButton.setBounds (top.removeFromLeft (84).reduced (0, 8));
-        top.removeFromLeft (8);
-
-        for (int c = 0; c < 2; ++c)
-        {
-            auto slot = top.removeFromLeft (110);
-            labels[c]->setBounds (slot.removeFromTop (12));
-            combos[c]->setBounds (slot.reduced (0, 1));
-            top.removeFromLeft (8);
-        }
-
-        randomNotesButton.setBounds (top.removeFromLeft (150).reduced (0, 8));
-        top.removeFromLeft (10);
-        midiOutButton.setBounds (top.removeFromLeft (96).reduced (0, 8));
-        top.removeFromLeft (6);
-        {
-            auto slot = top.removeFromLeft (56);
-            midiChannelLabel->setBounds (slot.removeFromTop (12));
-            midiChannelBox->setBounds (slot.reduced (0, 1));
-        }
-
-        auto knobRow = bounds.removeFromTop (knobHeight);
-        for (auto* k : arpKnobs)
-            k->setBounds (knobRow.removeFromLeft (knobWidth));
-
-        knobRow.removeFromLeft (12);
-        midiRootKnob->setBounds (knobRow.removeFromLeft (knobWidth));
-
-        bounds.removeFromTop (6);
-        stepGrid.setBounds (bounds.removeFromTop (150));
-
-        // euclidean panel
-        auto euCaption = right.removeFromTop (16);
-        labels[2]->setBounds (euCaption);
-
-        auto euKnobs = right.removeFromTop (knobHeight);
-        const int euWidth = juce::jmax (44, right.getWidth() / 4);
-        for (auto* k : euclidKnobs)
-            k->setBounds (euKnobs.removeFromLeft (euWidth));
-
-        euclidReadout.setBounds (right.removeFromTop (16));
-        right.removeFromTop (6);
-        euTargetBox.setBounds (right.removeFromTop (24));
-        right.removeFromTop (6);
-        generateButton.setBounds (right.removeFromTop (28));
-    }
-
-    //== lanes ===============================================================
+    //== lanes ==================================================================
     {
         auto bounds = laneContent.getLocalBounds();
-        const int laneHeight = bounds.getHeight() / 2;
+        const int blockHeight = 26 + 5 + 44 + 5 + 20;
 
         for (int l = 0; l < 2; ++l)
         {
-            auto lane = bounds.removeFromTop (laneHeight);
-            auto head = lane.removeFromTop (46);
+            auto& ui = lanes[(size_t) l];
+            auto block = bounds.removeFromTop (blockHeight);
+            bounds.removeFromTop (9);
 
-            chips[l]->setBounds (head.removeFromLeft (64).reduced (0, 12));
-            head.removeFromLeft (8);
-            buttons[l * 8]->setBounds (head.removeFromLeft (46).reduced (0, 12));
-            head.removeFromLeft (8);
+            auto head = block.removeFromTop (26);
+            ui.chip->setBounds (head.removeFromLeft (62).withSizeKeepingCentre (62, 22));
+            head.removeFromLeft (6);
+            ui.onButton->setBounds (head.removeFromLeft (44).withSizeKeepingCentre (44, 21));
+            head.removeFromLeft (6);
+            ui.div->setBounds (head.removeFromLeft (66).withSizeKeepingCentre (66, 21));
+            head.removeFromLeft (6);
+            ui.dir->setBounds (head.removeFromLeft (88).withSizeKeepingCentre (88, 21));
+            head.removeFromLeft (6);
+            ui.range->setBounds (head.removeFromLeft (84).withSizeKeepingCentre (84, 21));
 
-            for (int c = 0; c < 3; ++c)
+            block.removeFromTop (5);
+            auto body = block;
+            auto knobSlot = body.removeFromRight (KnobBox::width);
+            ui.amount->setBounds (knobSlot.withHeight (KnobBox::height).withY (head.getY()));
+            body.removeFromRight (8);
+
+            ui.bars->setBounds (body.removeFromTop (44));
+            body.removeFromTop (5);
+
+            auto tools = body.removeFromTop (20);
+            const int toolWidth = juce::jmin (74, tools.getWidth() / (int) ui.tools.size());
+            for (auto* b : ui.tools)
             {
-                auto slot = head.removeFromLeft (96);
-                labels[3 + l * 3 + c]->setBounds (slot.removeFromTop (12));
-                combos[2 + l * 3 + c]->setBounds (slot.reduced (0, 2));
-                head.removeFromLeft (6);
-            }
-
-            if (auto* amount = laneAmount[(size_t) l])
-                amount->setBounds (head.removeFromLeft (knobWidth).withHeight (knobHeight));
-
-            laneBars[l]->setBounds (lane.removeFromTop (56));
-            lane.removeFromTop (4);
-
-            auto tools = lane.removeFromTop (24);
-            const int toolWidth = juce::jmin (74, tools.getWidth() / 7);
-            for (int t = 0; t < 7; ++t)
-            {
-                buttons[l * 8 + 1 + t]->setBounds (tools.removeFromLeft (toolWidth).reduced (1, 0));
+                b->setBounds (tools.removeFromLeft (toolWidth).reduced (1, 0));
             }
         }
-    }
 
-    //== sources =============================================================
-    {
-        auto bounds = sourceContent.getLocalBounds();
-        auto row = bounds.removeFromTop (knobHeight);
-
+        // the sources row, under a divider
+        auto srcs = bounds.removeFromTop (juce::jmax (26, bounds.getHeight()));
+        auto row = srcs.withSizeKeepingCentre (srcs.getWidth(), 30);
+        dragCaption->setBounds (row.removeFromLeft (150));
+        row.removeFromLeft (4);
         for (int s = 0; s < 4; ++s)
         {
-            chips[2 + s]->setBounds (row.removeFromLeft (70).reduced (0, 22));
+            chips[2 + s]->setBounds (row.removeFromLeft (62).withSizeKeepingCentre (62, 22));
             row.removeFromLeft (6);
         }
-
-        row.removeFromLeft (10);
+        auto depth = row.removeFromRight (KnobBox::width * 2);
         for (auto* k : depthKnobs)
-            k->setBounds (row.removeFromLeft (knobWidth));
+            k->setBounds (depth.removeFromLeft (KnobBox::width).withHeight (KnobBox::height)
+                               .withY (srcs.getY() - 4));
+    }
 
-        labels[labels.size() - 1]->setBounds (bounds.removeFromTop (18));
+    //== arpeggiator ============================================================
+    {
+        auto bounds = arpContent.getLocalBounds();
+        auto right = bounds.removeFromRight (juce::jmin (286, bounds.getWidth() / 3));
+        bounds.removeFromRight (12);
+
+        auto top = bounds.removeFromTop (38);
+        arpOnButton.setBounds (top.removeFromLeft (80).withSizeKeepingCentre (80, 26));
+        top.removeFromLeft (8);
+
+        auto placeCombo = [&] (juce::ComboBox* box, juce::Label* caption, int width)
+        {
+            auto slot = top.removeFromLeft (width);
+            caption->setBounds (slot.removeFromTop (11));
+            box->setBounds (slot.withSizeKeepingCentre (width, 24));
+            top.removeFromLeft (8);
+        };
+
+        placeCombo (arpDirBox, dirCaption, 104);
+        placeCombo (arpDivBox, divCaption, 96);
+
+        randomNotesButton.setBounds (top.removeFromLeft (134).withSizeKeepingCentre (134, 26));
+        top.removeFromLeft (8);
+        midiOutButton.setBounds (top.removeFromLeft (88).withSizeKeepingCentre (88, 26));
+        top.removeFromLeft (6);
+        placeCombo (midiChannelBox, chCaption, 54);
+
+        auto knobRow = bounds.removeFromTop (KnobBox::height);
+        for (auto* k : arpKnobs)
+            k->setBounds (knobRow.removeFromLeft (KnobBox::width));
+
+        bounds.removeFromTop (4);
+        stepGrid.setBounds (bounds.removeFromTop (147));
+        hintCaption->setBounds (bounds.removeFromTop (16));
+
+        // the generator column
+        euCaption->setBounds (right.removeFromTop (14));
+        right.removeFromTop (6);
+        euclidRing->setBounds (right.removeFromTop (juce::jmin (196, right.getWidth())));
+        right.removeFromTop (8);
+
+        auto euKnobs = right.removeFromTop (KnobBox::height);
+        const int euWidth = euKnobs.getWidth() / 4;
+        for (auto* k : euclidKnobs)
+            k->setBounds (euKnobs.removeFromLeft (euWidth));
+
+        right.removeFromTop (7);
+        euTargetBox.setBounds (right.removeFromTop (26));
+        right.removeFromTop (7);
+        generateButton.setBounds (right.removeFromTop (30));
     }
 }

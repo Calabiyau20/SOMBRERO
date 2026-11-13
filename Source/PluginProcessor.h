@@ -4,11 +4,11 @@
 #include "Engine.h"
 
 //==============================================================================
-class CalabiHatsProcessor : public juce::AudioProcessor
+class MessyHatTricksProcessor : public juce::AudioProcessor
 {
 public:
-    CalabiHatsProcessor();
-    ~CalabiHatsProcessor() override = default;
+    MessyHatTricksProcessor();
+    ~MessyHatTricksProcessor() override = default;
 
     //== AudioProcessor =======================================================
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -19,7 +19,7 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
-    const juce::String getName() const override { return "Calabi Hats"; }
+    const juce::String getName() const override { return "Messy Hat Tricks"; }
     bool acceptsMidi() const override  { return true; }
     bool producesMidi() const override { return true; }
     bool isMidiEffect() const override { return false; }
@@ -36,6 +36,15 @@ public:
 
     //== plugin specific ======================================================
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
+
+    /** Oversampling factor the Quality setting currently asks for. */
+    int currentFactor() const noexcept;
+
+    //== presets ==============================================================
+    static juce::File presetFolder();
+    juce::Result savePresetTo (const juce::File& file);
+    juce::Result loadPresetFrom (const juce::File& file);
+    juce::String presetName() const { return currentPresetName; }
 
     juce::AudioProcessorValueTreeState apvts { *this, nullptr, "state", createLayout() };
     ch::Pattern pattern;
@@ -71,10 +80,20 @@ private:
     std::map<juce::String, std::atomic<float>*> cached;
 
     static constexpr int maxVoices = 10;
+    static constexpr int maxFactor = 4;
     std::array<ch::HatVoice, maxVoices> voices;
     int nextVoice = 0;
 
+    // One oversampler per factor, all built up front: switching Quality mid-flight
+    // must never allocate on the audio thread.
+    std::unique_ptr<juce::dsp::Oversampling<float>> os2, os4;
+    juce::AudioBuffer<float> baseScratch;
+    int activeFactor = 1;
+
+    juce::String currentPresetName { "Init" };
+
     double sampleRate = 44100.0;
+    double renderRate = 44100.0;
     double ppqPosition = 0.0;
     double hostBpm = 120.0;
     long   lastStepCounter = std::numeric_limits<long>::min();
@@ -90,5 +109,5 @@ private:
 
     juce::Random rng;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CalabiHatsProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MessyHatTricksProcessor)
 };

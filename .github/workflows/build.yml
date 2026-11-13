@@ -1,4 +1,4 @@
-name: Build Calabi Hats
+name: Build Messy Hat Tricks
 
 permissions:
   contents: write
@@ -25,10 +25,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Linux-style deps (macOS no-op)
-        if: runner.os == 'macOS'
-        run: echo "Xcode command line tools are preinstalled"
-
       - name: Configure (macOS, universal)
         if: runner.os == 'macOS'
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
@@ -44,55 +40,64 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           mkdir -p out
-          cp -R build/CalabiHats_artefacts/Release/VST3/*.vst3        out/ || true
-          cp -R build/CalabiHats_artefacts/Release/AU/*.component     out/ || true
-          cp -R build/CalabiHats_artefacts/Release/CLAP/*.clap        out/ || true
-          cp -R build/CalabiHats_artefacts/Release/Standalone/*.app   out/ || true
+          cp -R build/MessyHatTricks_artefacts/Release/VST3/*.vst3      out/ || true
+          cp -R build/MessyHatTricks_artefacts/Release/AU/*.component   out/ || true
+          cp -R build/MessyHatTricks_artefacts/Release/CLAP/*.clap      out/ || true
+          cp -R build/MessyHatTricks_artefacts/Release/Standalone/*.app out/ || true
+
+      - name: Ad-hoc sign and verify (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          for b in out/*; do codesign --force --deep --sign - "$b"; done
+          for b in out/*; do
+            echo "== $b"
+            codesign --verify --deep --strict --verbose=2 "$b" 2>&1 | tail -2
+            lipo -archs "$b"/Contents/MacOS/* 2>/dev/null || true
+            vtool -show-build "$b"/Contents/MacOS/* 2>/dev/null | grep -E "platform|minos" || true
+          done
 
       - name: Collect Windows plugins
         if: runner.os == 'Windows'
         shell: bash
         run: |
           mkdir -p out
-          cp -R build/CalabiHats_artefacts/Release/VST3/*.vst3        out/ || true
-          cp -R build/CalabiHats_artefacts/Release/CLAP/*.clap        out/ || true
-          cp -R build/CalabiHats_artefacts/Release/Standalone/*.exe   out/ || true
+          cp -R build/MessyHatTricks_artefacts/Release/VST3/*.vst3      out/ || true
+          cp -R build/MessyHatTricks_artefacts/Release/CLAP/*.clap      out/ || true
+          cp -R build/MessyHatTricks_artefacts/Release/Standalone/*.exe out/ || true
 
-      - name: Ad-hoc sign and verify (macOS)
-        if: runner.os == 'macOS'
+      # The AGPL asks that whoever gets a binary can get the matching source.
+      # Shipping it inside the release satisfies that without a public repo.
+      - name: Add the licence, the credits and the corresponding source
+        shell: bash
         run: |
-          for b in out/*; do
-            codesign --force --deep --sign - "$b"
-          done
-          for b in out/*; do
-            echo "== $b"
-            codesign --verify --deep --strict --verbose=2 "$b" 2>&1 | tail -2
-            lipo -archs "$b"/Contents/MacOS/* 2>/dev/null || true
-            vtool -show-build "$b"/Contents/MacOS/* 2>/dev/null | grep -E "platform|minos" || true
-            /usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$b/Contents/Info.plist" 2>/dev/null || true
-          done
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: CalabiHats-${{ runner.os }}
-          path: out/
+          cp LICENSE CREDITS.md INSTALL.md out/
+          mkdir -p out/source/Source out/source/Resources
+          cp Source/*.h Source/*.cpp out/source/Source/
+          cp Resources/*.png          out/source/Resources/
+          cp CMakeLists.txt LICENSE CREDITS.md README.md out/source/
+          cp -R scripts out/source/ || true
 
       - name: Zip (macOS)
         if: runner.os == 'macOS'
-        run: cd out && zip -qry ../CalabiHats-macOS.zip . && cd ..
+        run: cd out && zip -qry ../MessyHatTricks-macOS.zip . && cd ..
 
       - name: Zip (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path out\* -DestinationPath CalabiHats-Windows.zip -Force
+        run: Compress-Archive -Path out\* -DestinationPath MessyHatTricks-Windows.zip -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MessyHatTricks-${{ runner.os }}
+          path: out/
 
       - name: Publish the zip on a dist branch
         shell: bash
         run: |
-          git config user.name "Calabi Hats CI"
+          git config user.name "Messy Hat Tricks CI"
           git config user.email "ci@calabiyau.live"
           git checkout --orphan dist-${{ runner.os }}
           git reset
-          git add -f CalabiHats-${{ runner.os }}.zip
-          git commit -q -m "Calabi Hats binaries for ${{ runner.os }} (${{ github.sha }})"
+          git add -f MessyHatTricks-${{ runner.os }}.zip
+          git commit -q -m "Messy Hat Tricks binaries for ${{ runner.os }} (${{ github.sha }})"
           git push -f origin HEAD:dist-${{ runner.os }}

@@ -46,7 +46,7 @@ namespace
 }
 
 //==============================================================================
-double CalabiHatsProcessor::beatsPerStep (int divisionIndex)
+double MessyHatTricksProcessor::beatsPerStep (int divisionIndex)
 {
     switch (divisionIndex)
     {
@@ -61,7 +61,7 @@ double CalabiHatsProcessor::beatsPerStep (int divisionIndex)
 }
 
 //==============================================================================
-APVTS::ParameterLayout CalabiHatsProcessor::createLayout()
+APVTS::ParameterLayout MessyHatTricksProcessor::createLayout()
 {
     APVTS::ParameterLayout layout;
     auto add = [&layout] (const char* id, const char* name, NRange range, float def,
@@ -83,7 +83,7 @@ APVTS::ParameterLayout CalabiHatsProcessor::createLayout()
     add ("hissFreq",   "Hiss Freq",  skewed (500.0f, 16000.0f, 5000.0f),7400.0f,Fmt::hertz);
     add ("hissLevel",  "Hiss Level", NRange (0.0f, 1.0f),               0.55f,  Fmt::percent);
     add ("combFreq",   "Comb Freq",  skewed (120.0f, 9000.0f, 1500.0f), 2600.0f,Fmt::hertz);
-    add ("combFb",     "Comb Feedback", NRange (0.0f, 0.92f),           0.42f,  Fmt::percent);
+    add ("combFb",     "Comb Feedback", NRange (0.0f, 0.97f),           0.42f,  Fmt::percent);
     add ("combMix",    "Comb Mix",   NRange (0.0f, 1.0f),               0.34f,  Fmt::percent);
     add ("fmFreq",     "FM Freq",    skewed (150.0f, 7000.0f, 1500.0f), 1850.0f,Fmt::hertz);
     add ("fmDecay",    "FM Decay",   skewed (1.0f, 150.0f, 20.0f),      13.0f,  Fmt::millis);
@@ -104,6 +104,10 @@ APVTS::ParameterLayout CalabiHatsProcessor::createLayout()
     add ("arpSteps",   "Steps",   NRange (1.0f, 16.0f, 1.0f), 16.0f, Fmt::integer);
     add ("arpGate",    "Gate",    NRange (0.1f, 2.0f),        0.9f,  Fmt::gain);
     add ("arpSwing",   "Swing",   NRange (0.0f, 0.7f),        0.12f, Fmt::percent);
+
+    layout.add (std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID { "quality", 1 }, "Quality",
+        juce::StringArray { "Draft (1x)", "High (2x)", "Ultra (4x)" }, 1));
 
     // ---- MIDI output ----------------------------------------------------------
     layout.add (std::make_unique<juce::AudioParameterBool>  (juce::ParameterID { "midiOut", 1 }, "MIDI Out", false));
@@ -138,7 +142,7 @@ APVTS::ParameterLayout CalabiHatsProcessor::createLayout()
 }
 
 //==============================================================================
-CalabiHatsProcessor::CalabiHatsProcessor()
+MessyHatTricksProcessor::MessyHatTricksProcessor()
     : juce::AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
     for (auto* p : getParameters())
@@ -146,11 +150,36 @@ CalabiHatsProcessor::CalabiHatsProcessor()
             cached[withID->paramID] = apvts.getRawParameterValue (withID->paramID);
 }
 
-void CalabiHatsProcessor::prepareToPlay (double newSampleRate, int)
+int MessyHatTricksProcessor::currentFactor() const noexcept
+{
+    switch ((int) paramValue ("quality"))
+    {
+        case 0:  return 1;
+        case 2:  return 4;
+        default: return 2;
+    }
+}
+
+void MessyHatTricksProcessor::prepareToPlay (double newSampleRate, int samplesPerBlock)
 {
     sampleRate = newSampleRate;
+
+    // Voices are sized for the highest rate they may ever run at, so switching
+    // Quality later only changes a number, never the allocation.
     for (auto& v : voices)
-        v.prepare (sampleRate);
+        v.prepare (sampleRate * maxFactor);
+
+    using OS = juce::dsp::Oversampling<float>;
+    os2 = std::make_unique<OS> (2, 1, OS::filterHalfBandPolyphaseIIR, true, true);
+    os4 = std::make_unique<OS> (2, 2, OS::filterHalfBandPolyphaseIIR, true, true);
+    os2->initProcessing ((size_t) juce::jmax (1, samplesPerBlock));
+    os4->initProcessing ((size_t) juce::jmax (1, samplesPerBlock));
+    os2->reset();
+    os4->reset();
+
+    baseScratch.setSize (2, juce::jmax (1, samplesPerBlock), false, true, true);
+
+    activeFactor = 0;   // forces the render rate to be pushed to the voices
 
     lastStepCounter = std::numeric_limits<long>::min();
     ppqPosition = 0.0;
@@ -163,14 +192,14 @@ void CalabiHatsProcessor::prepareToPlay (double newSampleRate, int)
     incomingMidi.ensureSize (2048);   // so the audio thread never allocates
 }
 
-bool CalabiHatsProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+bool MessyHatTricksProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
     const auto out = layouts.getMainOutputChannelSet();
     return out == juce::AudioChannelSet::stereo() || out == juce::AudioChannelSet::mono();
 }
 
 //==============================================================================
-float CalabiHatsProcessor::modulated (int dest, const float srcValues[4]) const
+float MessyHatTricksProcessor::modulated (int dest, const float srcValues[4]) const
 {
     const auto& id = ch::destParamIDs()[dest];
     auto* param = apvts.getParameter (id);
@@ -190,7 +219,7 @@ float CalabiHatsProcessor::modulated (int dest, const float srcValues[4]) const
     return param->getNormalisableRange().convertFrom0to1 (juce::jlimit (0.0f, 1.0f, norm));
 }
 
-ch::VoiceParams CalabiHatsProcessor::resolveParams (float velocity, int semitones, const float srcValues[4])
+ch::VoiceParams MessyHatTricksProcessor::resolveParams (float velocity, int semitones, const float srcValues[4])
 {
     ch::VoiceParams vp;
     vp.attackMs     = modulated (ch::dAttack, srcValues);
@@ -220,7 +249,7 @@ ch::VoiceParams CalabiHatsProcessor::resolveParams (float velocity, int semitone
     return vp;
 }
 
-void CalabiHatsProcessor::startVoice (const ch::VoiceParams& vp)
+void MessyHatTricksProcessor::startVoice (const ch::VoiceParams& vp)
 {
     int index = -1;
     for (int i = 0; i < maxVoices; ++i)
@@ -235,7 +264,7 @@ void CalabiHatsProcessor::startVoice (const ch::VoiceParams& vp)
     voices[(size_t) index].trigger (vp);
 }
 
-void CalabiHatsProcessor::triggerManualHit (float velocity, int semitones)
+void MessyHatTricksProcessor::triggerManualHit (float velocity, int semitones)
 {
     const float src[4] = { laneValueAt (0, ppqPosition), laneValueAt (1, ppqPosition),
                            velocity, rng.nextFloat() * 2.0f - 1.0f };
@@ -243,7 +272,7 @@ void CalabiHatsProcessor::triggerManualHit (float velocity, int semitones)
 }
 
 //==============================================================================
-float CalabiHatsProcessor::laneValueAt (int laneIndex, double ppq) const
+float MessyHatTricksProcessor::laneValueAt (int laneIndex, double ppq) const
 {
     const auto n = juce::String (laneIndex + 1);
     if (paramValue (("lane" + n + "On").toRawUTF8()) < 0.5f)
@@ -269,7 +298,7 @@ float CalabiHatsProcessor::laneValueAt (int laneIndex, double ppq) const
     return bipolar ? raw * 2.0f - 1.0f : raw;
 }
 
-int CalabiHatsProcessor::orderedStepIndex (long counter) const
+int MessyHatTricksProcessor::orderedStepIndex (long counter) const
 {
     const int len = juce::jlimit (1, ch::Pattern::numSteps, (int) paramValue ("arpSteps"));
     const int dir = (int) paramValue ("arpDir");
@@ -293,7 +322,7 @@ int CalabiHatsProcessor::orderedStepIndex (long counter) const
     return order[(size_t) (counter % (long) order.size())];
 }
 
-void CalabiHatsProcessor::emitNote (int sampleOffset, int semitones, float velocity)
+void MessyHatTricksProcessor::emitNote (int sampleOffset, int semitones, float velocity)
 {
     if (outgoingMidi == nullptr || paramValue ("midiOut") < 0.5f)
         return;
@@ -309,7 +338,7 @@ void CalabiHatsProcessor::emitNote (int sampleOffset, int semitones, float veloc
     // Hold it for the step's gate, so the receiving device sees a real note length.
     const double stepBeats = beatsPerStep ((int) paramValue ("arpDiv"));
     const double gate = juce::jlimit (0.05f, 2.0f, paramValue ("arpGate"));
-    const int length = juce::jmax (16, (int) (stepBeats * gate * 60.0 / hostBpm * sampleRate));
+    const int length = juce::jmax (16, (int) (stepBeats * gate * 60.0 / hostBpm * renderRate));
 
     for (auto& h : heldNotes)
     {
@@ -326,7 +355,7 @@ void CalabiHatsProcessor::emitNote (int sampleOffset, int semitones, float veloc
     oldest = { length, note, channel, true };
 }
 
-void CalabiHatsProcessor::flushNoteOffs (int sampleOffset)
+void MessyHatTricksProcessor::flushNoteOffs (int sampleOffset)
 {
     for (auto& h : heldNotes)
     {
@@ -343,7 +372,7 @@ void CalabiHatsProcessor::flushNoteOffs (int sampleOffset)
     }
 }
 
-void CalabiHatsProcessor::triggerStep (long counter, int sampleOffset)
+void MessyHatTricksProcessor::triggerStep (long counter, int sampleOffset)
 {
     if (paramValue ("arpOn") < 0.5f)
         return;
@@ -371,7 +400,7 @@ void CalabiHatsProcessor::triggerStep (long counter, int sampleOffset)
 }
 
 //==============================================================================
-void CalabiHatsProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+void MessyHatTricksProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
@@ -400,9 +429,27 @@ void CalabiHatsProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     const bool sequencerRunning = transportPlaying || ! hasHostTransport;
 
 
-    const double ppqPerSample = hostBpm / 60.0 / sampleRate;
+    // ---- quality: pick the factor and tell the voices the rate they run at ----
+    // A block larger than the one we prepared for would overrun the scratch, so
+    // that rare case renders dry rather than reallocating here.
+    int factor = currentFactor();
+    const bool scratchFits = numSamples <= baseScratch.getNumSamples()
+                             && baseScratch.getNumChannels() >= 2;
+    if (! scratchFits || os2 == nullptr || os4 == nullptr)
+        factor = 1;
+
+    if (factor != activeFactor)
+    {
+        activeFactor = factor;
+        renderRate = sampleRate * factor;
+        for (auto& v : voices)
+            v.setRate (renderRate);
+    }
+
+    const int osSamples = numSamples * factor;
+    const double ppqPerSample = hostBpm / 60.0 / renderRate;
     const double stepBeats = beatsPerStep ((int) paramValue ("arpDiv"));
-    const double stepSamples = stepBeats * 60.0 / hostBpm * sampleRate;
+    const double stepSamples = stepBeats * 60.0 / hostBpm * renderRate;
     const float swing = paramValue ("arpSwing");
 
     // Incoming MIDI is taken aside so the same buffer can carry what we generate.
@@ -426,19 +473,41 @@ void CalabiHatsProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
     auto midiIterator = incomingMidi.begin();
 
-    float* left  = buffer.getWritePointer (0);
-    float* right = numChannels > 1 ? buffer.getWritePointer (1) : nullptr;
+    // ---- where the voices render ---------------------------------------------
+    // Above 1x the voices run into the oversampled block and the decimation
+    // filter on the way down removes anything that folded above Nyquist.
+    auto* overSampler = factor == 4 ? os4.get() : (factor == 2 ? os2.get() : nullptr);
 
-    for (int i = 0; i < numSamples; ++i)
+    // At 1x without a usable scratch the voices render straight into the output.
+    const bool viaScratch = scratchFits;
+    juce::dsp::AudioBlock<float> baseBlock = viaScratch
+        ? juce::dsp::AudioBlock<float> (baseScratch).getSubBlock (0, (size_t) numSamples)
+        : juce::dsp::AudioBlock<float> (buffer).getSubBlock (0, (size_t) numSamples);
+    baseBlock.clear();
+
+    juce::dsp::AudioBlock<float> renderBlock = baseBlock;
+    if (overSampler != nullptr)
+    {
+        renderBlock = overSampler->processSamplesUp (baseBlock);
+        renderBlock.clear();
+    }
+
+    float* left  = renderBlock.getChannelPointer (0);
+    float* right = renderBlock.getNumChannels() > 1 ? renderBlock.getChannelPointer (1) : nullptr;
+
+    for (int i = 0; i < osSamples; ++i)
     {
         // ---- MIDI notes trigger a hit directly -----------------------------
-        while (midiIterator != incomingMidi.end() && (*midiIterator).samplePosition <= i)
+        while (midiIterator != incomingMidi.end()
+                && (*midiIterator).samplePosition * factor <= i)
         {
             const auto message = (*midiIterator).getMessage();
             if (message.isNoteOn())
                 triggerManualHit (message.getFloatVelocity(), message.getNoteNumber() - 60);
             ++midiIterator;
         }
+
+        const int hostSample = i / factor;
 
         // ---- sequencer ------------------------------------------------------
         const long counter = (long) std::floor (juce::jmax (0.0, ppqPosition) / juce::jmax (1.0e-6, stepBeats));
@@ -450,7 +519,7 @@ void CalabiHatsProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
             if (delaySamples <= 0)
             {
-                triggerStep (counter, i);
+                triggerStep (counter, hostSample);
             }
             else
             {
@@ -467,11 +536,11 @@ void CalabiHatsProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
             if (--p.samplesLeft <= 0)
             {
                 p.active = false;
-                triggerStep (p.counter, i);
+                triggerStep (p.counter, hostSample);
             }
         }
 
-        flushNoteOffs (i);
+        flushNoteOffs (hostSample);
 
         // ---- voices -----------------------------------------------------------
         float l = 0.0f, r = 0.0f;
@@ -485,27 +554,89 @@ void CalabiHatsProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         ppqPosition += ppqPerSample;
     }
 
+    if (overSampler != nullptr)
+        overSampler->processSamplesDown (baseBlock);
+
+    if (viaScratch)
+        for (int ch = 0; ch < numChannels; ++ch)
+            buffer.copyFrom (ch, 0, baseScratch, juce::jmin (ch, 1), 0, numSamples);
+    else if (numChannels > 1 && right == nullptr)
+        buffer.copyFrom (1, 0, buffer, 0, 0, numSamples);
+
     outgoingMidi = nullptr;
     uiLevel = buffer.getMagnitude (0, numSamples);
 }
 
 //==============================================================================
-juce::AudioProcessorEditor* CalabiHatsProcessor::createEditor()
+juce::AudioProcessorEditor* MessyHatTricksProcessor::createEditor()
 {
-    return new CalabiHatsEditor (*this);
+    return new MessyHatTricksEditor (*this);
 }
 
-void CalabiHatsProcessor::getStateInformation (juce::MemoryBlock& destData)
+//==============================================================================
+juce::File MessyHatTricksProcessor::presetFolder()
+{
+    auto folder = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                      .getChildFile ("Calabi Yau")
+                      .getChildFile ("Messy Hat Tricks")
+                      .getChildFile ("Presets");
+    folder.createDirectory();
+    return folder;
+}
+
+juce::Result MessyHatTricksProcessor::savePresetTo (const juce::File& file)
 {
     auto state = apvts.copyState();
     auto patternTree = state.getOrCreateChildWithName ("pattern", nullptr);
     pattern.writeTo (patternTree);
+    state.setProperty ("presetName", file.getFileNameWithoutExtension(), nullptr);
+
+    auto xml = state.createXml();
+    if (xml == nullptr)
+        return juce::Result::fail ("Could not build the preset.");
+
+    if (! file.getParentDirectory().createDirectory())
+        return juce::Result::fail ("Could not create " + file.getParentDirectory().getFullPathName());
+
+    if (! xml->writeTo (file, {}))
+        return juce::Result::fail ("Could not write " + file.getFullPathName());
+
+    currentPresetName = file.getFileNameWithoutExtension();
+    return juce::Result::ok();
+}
+
+juce::Result MessyHatTricksProcessor::loadPresetFrom (const juce::File& file)
+{
+    if (! file.existsAsFile())
+        return juce::Result::fail ("That preset is not there any more.");
+
+    auto xml = juce::parseXML (file);
+    if (xml == nullptr)
+        return juce::Result::fail ("That file is not a Messy Hat Tricks preset.");
+
+    auto state = juce::ValueTree::fromXml (*xml);
+    if (! state.isValid() || state.getType() != apvts.state.getType())
+        return juce::Result::fail ("That file is not a Messy Hat Tricks preset.");
+
+    pattern.readFrom (state.getChildWithName ("pattern"));
+    apvts.replaceState (state);
+    currentPresetName = file.getFileNameWithoutExtension();
+    return juce::Result::ok();
+}
+
+//==============================================================================
+void MessyHatTricksProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    auto state = apvts.copyState();
+    auto patternTree = state.getOrCreateChildWithName ("pattern", nullptr);
+    pattern.writeTo (patternTree);
+    state.setProperty ("presetName", currentPresetName, nullptr);
 
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
 
-void CalabiHatsProcessor::setStateInformation (const void* data, int sizeInBytes)
+void MessyHatTricksProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
     {
@@ -514,6 +645,7 @@ void CalabiHatsProcessor::setStateInformation (const void* data, int sizeInBytes
             return;
 
         pattern.readFrom (state.getChildWithName ("pattern"));
+        currentPresetName = state.getProperty ("presetName", "Init").toString();
         apvts.replaceState (state);
     }
 }
@@ -521,5 +653,5 @@ void CalabiHatsProcessor::setStateInformation (const void* data, int sizeInBytes
 //==============================================================================
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    return new CalabiHatsProcessor();
+    return new MessyHatTricksProcessor();
 }

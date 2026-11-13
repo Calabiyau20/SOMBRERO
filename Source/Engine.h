@@ -43,6 +43,39 @@ struct SVF
 };
 
 //==============================================================================
+/** PolyBLEP: the correction that rounds off an oscillator's discontinuities so
+    they stop folding back into the audible range. `t` is the phase, `dt` the
+    phase increment for one sample. */
+inline float polyBlep (float t, float dt) noexcept
+{
+    if (dt <= 0.0f)
+        return 0.0f;
+
+    if (t < dt)                       // just after the jump
+    {
+        t /= dt;
+        return t + t - t * t - 1.0f;
+    }
+
+    if (t > 1.0f - dt)                // just before it
+    {
+        t = (t - 1.0f) / dt;
+        return t * t + t + t + 1.0f;
+    }
+
+    return 0.0f;
+}
+
+/** A band-limited square, built from the naive one plus a BLEP at each edge. */
+inline float blepSquare (float phase, float inc) noexcept
+{
+    float v = phase < 0.5f ? 1.0f : -1.0f;
+    v += polyBlep (phase, inc);
+    v -= polyBlep (std::fmod (phase + 0.5f, 1.0f), inc);
+    return v;
+}
+
+//==============================================================================
 /** One resolved snapshot of the voice parameters, taken at trigger time so that
     modulation is applied per hit, exactly like the prototype. */
 struct VoiceParams
@@ -69,13 +102,18 @@ class HatVoice
 public:
     static constexpr int numMetalPartials = 6;
 
-    void prepare (double newSampleRate)
+    /** Buffers are sized for the highest rate the voice may ever run at, so the
+        oversampling factor can change later without touching the heap. */
+    void prepare (double highestRate)
     {
-        sampleRate = newSampleRate;
-        combBuffer.assign ((size_t) juce::roundToInt (sampleRate * 0.06) + 4, 0.0f);
-        widthBuffer.assign ((size_t) juce::roundToInt (sampleRate * 0.02) + 4, 0.0f);
+        sampleRate = highestRate;
+        combBuffer.assign ((size_t) juce::roundToInt (highestRate * 0.06) + 4, 0.0f);
+        widthBuffer.assign ((size_t) juce::roundToInt (highestRate * 0.02) + 4, 0.0f);
         reset();
     }
+
+    /** The rate the voice actually renders at, read afresh on every trigger. */
+    void setRate (double rate) noexcept { sampleRate = rate; }
 
     void reset()
     {
@@ -155,13 +193,13 @@ public:
             if (env < 1.0e-5f) { playing = false; env = 0.0f; return; }
         }
 
-        // ---- metal: six squares through a bandpass -------------------------
+        // ---- metal: six band-limited squares through a bandpass -------------
         float metal = 0.0f;
         for (int i = 0; i < numMetalPartials; ++i)
         {
             metalPhase[i] += metalInc[i];
             if (metalPhase[i] >= 1.0f) metalPhase[i] -= 1.0f;
-            metal += (metalPhase[i] < 0.5f ? 1.0f : -1.0f);
+            metal += blepSquare (metalPhase[i], metalInc[i]);
         }
         metal = metalFilter.process (metal * (1.0f / numMetalPartials)).bp * p.metalLevel * 1.6f;
 
@@ -189,9 +227,12 @@ public:
         float sig = (metal + click + hiss + fm) * 0.35f;
 
         // ---- comb ------------------------------------------------------------
+        // At 97 % the loop is only just losing energy, so the return path is
+        // softly saturated: it keeps ringing without ever running away.
         const float delayed = readDelay (combBuffer, combWrite, combDelaySamples);
         const float damped = dampFilter.process (delayed).lp;
-        combBuffer[(size_t) combWrite] = sig + damped * p.combFeedback;
+        const float back = std::tanh (damped * p.combFeedback * 1.35f) * 0.74f;
+        combBuffer[(size_t) combWrite] = sig + back;
         if (++combWrite >= (int) combBuffer.size()) combWrite = 0;
         sig = sig * (1.0f - p.combMix * 0.65f) + delayed * p.combMix;
 
