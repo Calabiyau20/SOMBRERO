@@ -41,6 +41,10 @@ namespace cy
         return n;
     }
 
+    /** The Calabi Hats isologo — the drum robot in its bowler hat.
+        Loaded once from the embedded PNG; defined in PluginEditor.cpp. */
+    const juce::Image& brandMark();
+
     /** Chamfered frame, the shape used across the Calabi Yau plugins. */
     inline juce::Path chamfer (juce::Rectangle<float> r, float cut)
     {
@@ -297,6 +301,241 @@ private:
     bool highlight = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KnobBox)
+};
+
+//==============================================================================
+/** One stage of the voice: its own tint, its name, and a line saying what it
+    does in the synthesis. Knobs (or the filter pad) are placed inside it. */
+class ModuleBox  : public juce::Component
+{
+public:
+    ModuleBox (const juce::String& titleText, const juce::String& blurbText, juce::Colour tint)
+        : title (titleText), blurb (blurbText), colour (tint) {}
+
+    static constexpr int headerHeight = 38;
+
+    juce::Rectangle<int> contentArea() const
+    {
+        return getLocalBounds().withTrimmedTop (headerHeight).reduced (10, 0).withTrimmedBottom (8);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+
+        g.setColour (colour.withAlpha (0.10f));
+        g.fillPath (cy::chamfer (r, 10.0f));
+
+        g.setColour (colour.withAlpha (0.55f));
+        g.strokePath (cy::chamfer (r.reduced (0.5f), 10.0f), juce::PathStrokeType (1.2f));
+
+        auto header = getLocalBounds().withHeight (headerHeight).reduced (12, 5);
+
+        g.setColour (colour);
+        g.setFont (juce::Font (juce::FontOptions (11.5f)).boldened());
+        g.drawText (title, header.removeFromTop (14), juce::Justification::centredLeft, false);
+
+        g.setColour (cy::dim);
+        g.setFont (juce::Font (juce::FontOptions (9.5f)));
+        g.drawText (blurb, header, juce::Justification::centredLeft, false);
+    }
+
+private:
+    juce::String title, blurb;
+    juce::Colour colour;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ModuleBox)
+};
+
+//==============================================================================
+/** The high-pass filter as an XY pad: cutoff across, resonance up.
+    Drag the handle, or use the arrow keys. Shift gives a fine drag. */
+class FilterPad  : public juce::Component,
+                   public juce::DragAndDropTarget,
+                   private juce::Timer
+{
+public:
+    explicit FilterPad (CalabiHatsProcessor& p) : proc (p)
+    {
+        cutoff = proc.apvts.getParameter ("filterFreq");
+        reso   = proc.apvts.getParameter ("filterQ");
+        setWantsKeyboardFocus (true);
+        setMouseCursor (juce::MouseCursor::CrosshairCursor);
+        startTimerHz (24);
+    }
+
+    static constexpr float fMin = 120.0f, fMax = 14000.0f;
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+
+        g.setColour (cy::slot);
+        g.fillRect (r);
+
+        // frequency grid
+        g.setFont (juce::Font (juce::FontOptions (9.0f)));
+        for (float f : { 125.0f, 250.0f, 500.0f, 1000.0f, 2000.0f, 4000.0f, 8000.0f })
+        {
+            const float x = r.getX() + freqToX (f) * r.getWidth();
+            g.setColour (cy::line.withAlpha (0.55f));
+            g.drawLine (x, r.getY(), x, r.getBottom(), 1.0f);
+            g.setColour (cy::faint);
+            g.drawText (f >= 1000.0f ? juce::String (f / 1000.0f, 0) + "k" : juce::String ((int) f),
+                        juce::Rectangle<float> (x + 3.0f, r.getBottom() - 14.0f, 34.0f, 12.0f)
+                            .toNearestInt(),
+                        juce::Justification::left, false);
+        }
+        for (int i = 1; i < 4; ++i)
+        {
+            const float y = r.getY() + r.getHeight() * (float) i / 4.0f;
+            g.setColour (cy::line.withAlpha (0.4f));
+            g.drawLine (r.getX(), y, r.getRight(), y, 1.0f);
+        }
+
+        // the high-pass response, drawn from the same values the DSP uses
+        const float fc = cutoffHz(), q = resonance();
+        juce::Path curve;
+        for (float px = 0.0f; px <= r.getWidth(); px += 2.0f)
+        {
+            const float f = xToFreq (px / r.getWidth());
+            const float ratio = f / fc;
+            const float mag = ratio * ratio
+                / std::sqrt (std::pow (1.0f - ratio * ratio, 2.0f) + std::pow (ratio / q, 2.0f));
+            const float db = 20.0f * std::log10 (juce::jmax (1.0e-4f, mag));
+            const float y = juce::jlimit (r.getY() - 20.0f, r.getBottom() + 20.0f,
+                                          r.getCentreY() - db * (r.getHeight() / 48.0f));
+            if (px == 0.0f) curve.startNewSubPath (r.getX() + px, y);
+            else            curve.lineTo (r.getX() + px, y);
+        }
+
+        auto fill = curve;
+        fill.lineTo (r.getRight(), r.getBottom());
+        fill.lineTo (r.getX(), r.getBottom());
+        fill.closeSubPath();
+        g.setColour (cy::gold.withAlpha (0.12f));
+        g.fillPath (fill);
+
+        g.setColour (cy::gold);
+        g.strokePath (curve, juce::PathStrokeType (2.0f));
+
+        // the handle
+        const auto h = handlePos();
+        g.setColour (cy::neon.withAlpha (0.25f));
+        g.fillEllipse (h.x - 16.0f, h.y - 16.0f, 32.0f, 32.0f);
+        g.setColour (cy::neon);
+        g.fillEllipse (h.x - 7.0f, h.y - 7.0f, 14.0f, 14.0f);
+        g.setColour (cy::voidBg);
+        g.fillEllipse (h.x - 3.0f, h.y - 3.0f, 6.0f, 6.0f);
+
+        g.setColour (cy::neon.withAlpha (0.45f));
+        g.drawLine (h.x, r.getY(), h.x, r.getBottom(), 1.0f);
+        g.drawLine (r.getX(), h.y, r.getRight(), h.y, 1.0f);
+
+        // readout
+        g.setColour (cy::ink);
+        g.setFont (juce::Font (juce::FontOptions (11.0f)).boldened());
+        g.drawText (cutoff->getCurrentValueAsText() + "   Q " + reso->getCurrentValueAsText(),
+                    getLocalBounds().reduced (8, 6), juce::Justification::topRight, false);
+
+        g.setColour (cy::line);
+        g.drawRect (getLocalBounds(), 1);
+
+        if (hasKeyboardFocus (false))
+        {
+            g.setColour (cy::gold);
+            g.drawRect (getLocalBounds(), 2);
+        }
+
+        if (highlight)
+        {
+            g.setColour (cy::gold.withAlpha (0.2f));
+            g.fillRect (getLocalBounds());
+        }
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override { grabKeyboardFocus(); dragTo (e); }
+    void mouseDrag (const juce::MouseEvent& e) override { dragTo (e); }
+
+    bool keyPressed (const juce::KeyPress& k) override
+    {
+        const float stepX = k.getModifiers().isShiftDown() ? 0.002f : 0.02f;
+        if (k.isKeyCode (juce::KeyPress::leftKey))  { nudge (-stepX, 0.0f); return true; }
+        if (k.isKeyCode (juce::KeyPress::rightKey)) { nudge ( stepX, 0.0f); return true; }
+        if (k.isKeyCode (juce::KeyPress::upKey))    { nudge (0.0f,  stepX); return true; }
+        if (k.isKeyCode (juce::KeyPress::downKey))  { nudge (0.0f, -stepX); return true; }
+        return false;
+    }
+
+    //== drag and drop: the pad is a modulation destination too =================
+    bool isInterestedInDragSource (const SourceDetails& d) override { return d.description.isInt(); }
+    void itemDragEnter (const SourceDetails&) override { highlight = true;  repaint(); }
+    void itemDragExit  (const SourceDetails&) override { highlight = false; repaint(); }
+
+    void itemDropped (const SourceDetails& d) override
+    {
+        const int source = (int) d.description;
+        if (juce::isPositiveAndBelow (source, 4))
+            proc.pattern.setRoute (ch::dFilterFreq, (ch::ModSource) source, true);
+
+        highlight = false;
+        repaint();
+    }
+
+private:
+    void timerCallback() override
+    {
+        const auto now = cutoff->getValue() * 1000.0f + reso->getValue();
+        if (std::abs (now - lastDrawn) > 0.001f) { lastDrawn = now; repaint(); }
+    }
+
+    static float freqToX (float f)
+    {
+        return std::log (f / fMin) / std::log (fMax / fMin);
+    }
+    static float xToFreq (float x)
+    {
+        return fMin * std::pow (fMax / fMin, juce::jlimit (0.0f, 1.0f, x));
+    }
+
+    float cutoffHz()   const { return cutoff->getNormalisableRange().convertFrom0to1 (cutoff->getValue()); }
+    float resonance()  const { return reso->getNormalisableRange().convertFrom0to1 (reso->getValue()); }
+
+    juce::Point<float> handlePos() const
+    {
+        auto r = getLocalBounds().toFloat();
+        return { r.getX() + freqToX (juce::jlimit (fMin, fMax, cutoffHz())) * r.getWidth(),
+                 r.getBottom() - reso->getValue() * r.getHeight() };
+    }
+
+    void dragTo (const juce::MouseEvent& e)
+    {
+        auto r = getLocalBounds().toFloat();
+        const float nx = juce::jlimit (0.0f, 1.0f, (float) e.x / juce::jmax (1.0f, r.getWidth()));
+        const float ny = juce::jlimit (0.0f, 1.0f, 1.0f - (float) e.y / juce::jmax (1.0f, r.getHeight()));
+
+        const float hz = xToFreq (nx);
+        cutoff->setValueNotifyingHost (cutoff->getNormalisableRange().convertTo0to1 (hz));
+        reso->setValueNotifyingHost (ny);
+        repaint();
+    }
+
+    void nudge (float dx, float dy)
+    {
+        if (dx != 0.0f)
+            cutoff->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, cutoff->getValue() + dx));
+        if (dy != 0.0f)
+            reso->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, reso->getValue() + dy));
+        repaint();
+    }
+
+    CalabiHatsProcessor& proc;
+    juce::RangedAudioParameter* cutoff = nullptr;
+    juce::RangedAudioParameter* reso = nullptr;
+    float lastDrawn = -1.0f;
+    bool highlight = false;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FilterPad)
 };
 
 //==============================================================================
@@ -578,6 +817,16 @@ public:
         g.strokePath (cy::chamfer (bounds.reduced (0.5f), 12.0f), juce::PathStrokeType (1.0f));
 
         auto header = getLocalBounds().removeFromTop (headerHeight).reduced (12, 0);
+
+        // the isologo stands in for a bullet at the head of every section
+        if (const auto& mark = cy::brandMark(); mark.isValid())
+        {
+            auto markArea = header.removeFromLeft (18).toFloat()
+                                  .withSizeKeepingCentre (18.0f, 18.0f);
+            g.drawImage (mark, markArea, juce::RectanglePlacement::centred);
+            header.removeFromLeft (8);
+        }
+
         g.setColour (cy::gold);
         g.setFont (juce::Font (juce::FontOptions (10.0f)).boldened());
         g.drawText (title.toUpperCase(), header.removeFromLeft (header.getWidth() - 20),
@@ -635,6 +884,7 @@ private:
     void generateRandomPattern();
     void generateEuclid();
     void applyLaneTool (int lane, int tool);
+    void buildVoiceModules();
 
     KnobBox* addKnob (juce::Component& parent, int dest);
     void addCombo (juce::Component& parent, const juce::String& paramID, const juce::String& label);
@@ -649,6 +899,12 @@ private:
     std::unique_ptr<Section> voiceSection, arpSection, laneSection, sourceSection;
 
     juce::OwnedArray<KnobBox> knobs;
+    juce::OwnedArray<ModuleBox> modules;
+    std::unique_ptr<FilterPad> filterPad;
+    /** Which knobs sit in each module, in the order they were added. */
+    std::vector<std::vector<KnobBox*>> moduleKnobs;
+    std::vector<KnobBox*> arpKnobs, euclidKnobs, depthKnobs;
+    std::array<KnobBox*, 2> laneAmount { nullptr, nullptr };
     juce::OwnedArray<juce::Label> labels;
     juce::OwnedArray<juce::ComboBox> combos;
     juce::OwnedArray<juce::AudioProcessorValueTreeState::ComboBoxAttachment> comboAttachments;
@@ -658,6 +914,10 @@ private:
     juce::OwnedArray<LaneBars> laneBars;
 
     juce::TextButton arpOnButton { "ARP ON" }, triggerButton { "Trigger" };
+    juce::TextButton midiOutButton { "MIDI OUT" };
+    juce::ComboBox* midiChannelBox = nullptr;
+    juce::Label* midiChannelLabel = nullptr;
+    KnobBox* midiRootKnob = nullptr;
     juce::TextButton randomNotesButton { juce::String (juce::CharPointer_UTF8 ("\xe2\x9a\x84")) + " Random notes" };
     juce::TextButton generateButton { "Generate" };
     juce::ComboBox euTargetBox;

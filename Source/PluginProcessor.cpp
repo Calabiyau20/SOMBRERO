@@ -17,6 +17,32 @@ namespace
     const juce::StringArray arpDirections { "Forward", "Backward", "Random", "Odd steps", "Even steps" };
     const juce::StringArray laneDirections { "Forward", "Reverse", "Ping-Pong", "Random" };
     const juce::StringArray laneRanges { "Unipolar", "Bipolar" };
+    const juce::StringArray midiChannels { "1", "2", "3", "4", "5", "6", "7", "8",
+                                           "9", "10", "11", "12", "13", "14", "15", "16" };
+
+    /** How a parameter prints itself in the host and under its knob. */
+    enum class Fmt { hertz, millis, ratio, percent, integer, gain };
+
+    juce::String formatValue (float v, Fmt fmt)
+    {
+        switch (fmt)
+        {
+            case Fmt::hertz:
+                return v >= 1000.0f ? juce::String (v / 1000.0f, 2) + " kHz"
+                                    : juce::String (juce::roundToInt (v)) + " Hz";
+            case Fmt::millis:
+                return v < 10.0f ? juce::String (v, 1) + " ms"
+                                 : juce::String (juce::roundToInt (v)) + " ms";
+            case Fmt::percent:
+                return juce::String (juce::roundToInt (v * 100.0f)) + " %";
+            case Fmt::integer:
+                return juce::String (juce::roundToInt (v));
+            case Fmt::gain:
+                return juce::String (v, 2);
+            default:
+                return juce::String (v, 2);
+        }
+    }
 }
 
 //==============================================================================
@@ -38,44 +64,51 @@ double CalabiHatsProcessor::beatsPerStep (int divisionIndex)
 APVTS::ParameterLayout CalabiHatsProcessor::createLayout()
 {
     APVTS::ParameterLayout layout;
-    auto add = [&layout] (const char* id, const char* name, NRange range, float def, const char* unit = "")
+    auto add = [&layout] (const char* id, const char* name, NRange range, float def,
+                          Fmt fmt = Fmt::ratio)
     {
         layout.add (std::make_unique<juce::AudioParameterFloat> (
             juce::ParameterID { id, 1 }, name, range, def,
-            juce::AudioParameterFloatAttributes().withLabel (unit)));
+            juce::AudioParameterFloatAttributes()
+                .withStringFromValueFunction ([fmt] (float v, int) { return formatValue (v, fmt); })));
     };
 
     // ---- voice -------------------------------------------------------------
-    add ("attack",     "Attack",     skewed (0.1f, 60.0f, 4.0f),      0.6f,  "ms");
-    add ("decay",      "Decay",      skewed (8.0f, 1400.0f, 150.0f),  110.0f,"ms");
-    add ("metalFreq",  "Metal Freq", skewed (40.0f, 4000.0f, 400.0f), 320.0f,"Hz");
-    add ("metalLevel", "Metal Level",NRange (0.0f, 1.0f),              0.75f);
-    add ("clickFreq",  "Click Freq", skewed (100.0f, 9000.0f, 1200.0f),1150.0f,"Hz");
-    add ("clickLevel", "Click Level",NRange (0.0f, 1.0f),              0.6f);
-    add ("hissFreq",   "Hiss Freq",  skewed (500.0f, 16000.0f, 5000.0f),7400.0f,"Hz");
-    add ("hissLevel",  "Hiss Level", NRange (0.0f, 1.0f),              0.55f);
-    add ("combFreq",   "Comb Freq",  skewed (120.0f, 9000.0f, 1500.0f),2600.0f,"Hz");
-    add ("combFb",     "Comb Feedback", NRange (0.0f, 0.92f),          0.42f);
-    add ("combMix",    "Comb Mix",   NRange (0.0f, 1.0f),              0.34f);
-    add ("fmFreq",     "FM Freq",    skewed (150.0f, 7000.0f, 1500.0f),1850.0f,"Hz");
-    add ("fmDecay",    "FM Decay",   skewed (1.0f, 150.0f, 20.0f),    13.0f, "ms");
-    add ("modFreq",    "Mod Freq",   skewed (0.5f, 3200.0f, 300.0f),  430.0f,"Hz");
-    add ("modAmount",  "Mod Amount", NRange (0.0f, 1.0f),              0.34f);
-    add ("modMix",     "Mod Mix",    NRange (0.0f, 1.0f),              0.26f);
-    add ("filterFreq", "Filter",     skewed (120.0f, 14000.0f, 2000.0f),4230.0f,"Hz");
-    add ("filterQ",    "Filter Q",   skewed (0.3f, 9.0f, 1.5f),       0.83f);
-    add ("velSens",    "Vel Sens",   NRange (0.0f, 1.0f),              0.72f);
-    add ("width",      "Width",      NRange (0.0f, 1.0f),              0.55f);
-    add ("output",     "Output",     NRange (0.0f, 1.4f),              0.85f);
+    add ("attack",     "Attack",     skewed (0.1f, 60.0f, 4.0f),        0.6f,   Fmt::millis);
+    add ("decay",      "Decay",      skewed (8.0f, 1400.0f, 150.0f),    110.0f, Fmt::millis);
+    add ("metalFreq",  "Metal Freq", skewed (40.0f, 4000.0f, 400.0f),   320.0f, Fmt::hertz);
+    add ("metalLevel", "Metal Level",NRange (0.0f, 1.0f),               0.75f,  Fmt::percent);
+    add ("clickFreq",  "Click Freq", skewed (100.0f, 9000.0f, 1200.0f), 1150.0f,Fmt::hertz);
+    add ("clickLevel", "Click Level",NRange (0.0f, 1.0f),               0.6f,   Fmt::percent);
+    add ("hissFreq",   "Hiss Freq",  skewed (500.0f, 16000.0f, 5000.0f),7400.0f,Fmt::hertz);
+    add ("hissLevel",  "Hiss Level", NRange (0.0f, 1.0f),               0.55f,  Fmt::percent);
+    add ("combFreq",   "Comb Freq",  skewed (120.0f, 9000.0f, 1500.0f), 2600.0f,Fmt::hertz);
+    add ("combFb",     "Comb Feedback", NRange (0.0f, 0.92f),           0.42f,  Fmt::percent);
+    add ("combMix",    "Comb Mix",   NRange (0.0f, 1.0f),               0.34f,  Fmt::percent);
+    add ("fmFreq",     "FM Freq",    skewed (150.0f, 7000.0f, 1500.0f), 1850.0f,Fmt::hertz);
+    add ("fmDecay",    "FM Decay",   skewed (1.0f, 150.0f, 20.0f),      13.0f,  Fmt::millis);
+    add ("modFreq",    "Mod Freq",   skewed (0.5f, 3200.0f, 300.0f),    430.0f, Fmt::hertz);
+    add ("modAmount",  "Mod Amount", NRange (0.0f, 1.0f),               0.34f,  Fmt::percent);
+    add ("modMix",     "Mod Mix",    NRange (0.0f, 1.0f),               0.26f,  Fmt::percent);
+    add ("filterFreq", "Cutoff",     skewed (120.0f, 14000.0f, 2000.0f),4230.0f,Fmt::hertz);
+    add ("filterQ",    "Resonance",  skewed (0.3f, 9.0f, 1.5f),         0.83f,  Fmt::gain);
+    add ("velSens",    "Vel Sens",   NRange (0.0f, 1.0f),               0.72f,  Fmt::percent);
+    add ("width",      "Width",      NRange (0.0f, 1.0f),               0.55f,  Fmt::percent);
+    add ("output",     "Output",     NRange (0.0f, 1.4f),               0.85f,  Fmt::gain);
 
     // ---- arpeggiator --------------------------------------------------------
     layout.add (std::make_unique<juce::AudioParameterBool>  (juce::ParameterID { "arpOn", 1 }, "Arp On", true));
     layout.add (std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "arpDir", 1 }, "Direction", arpDirections, 0));
     layout.add (std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "arpDiv", 1 }, "Division", divisionNames, 2));
-    add ("arpOctaves", "Octaves", NRange (1.0f, 4.0f, 1.0f),  1.0f);
-    add ("arpSteps",   "Steps",   NRange (1.0f, 16.0f, 1.0f), 16.0f);
-    add ("arpGate",    "Gate",    NRange (0.1f, 2.0f),        0.9f);
-    add ("arpSwing",   "Swing",   NRange (0.0f, 0.7f),        0.12f);
+    add ("arpOctaves", "Octaves", NRange (1.0f, 4.0f, 1.0f),  1.0f,  Fmt::integer);
+    add ("arpSteps",   "Steps",   NRange (1.0f, 16.0f, 1.0f), 16.0f, Fmt::integer);
+    add ("arpGate",    "Gate",    NRange (0.1f, 2.0f),        0.9f,  Fmt::gain);
+    add ("arpSwing",   "Swing",   NRange (0.0f, 0.7f),        0.12f, Fmt::percent);
+
+    // ---- MIDI output ----------------------------------------------------------
+    layout.add (std::make_unique<juce::AudioParameterBool>  (juce::ParameterID { "midiOut", 1 }, "MIDI Out", false));
+    layout.add (std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "midiChannel", 1 }, "MIDI Channel", midiChannels, 0));
+    layout.add (std::make_unique<juce::AudioParameterInt>   (juce::ParameterID { "midiRoot", 1 }, "MIDI Root Note", 0, 127, 42));
 
     // ---- mod lanes -----------------------------------------------------------
     for (int l = 1; l <= 2; ++l)
@@ -85,18 +118,21 @@ APVTS::ParameterLayout CalabiHatsProcessor::createLayout()
         layout.add (std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "lane" + n + "Div", 1 },   "Lane " + n + " Division", divisionNames, l == 1 ? 2 : 1));
         layout.add (std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "lane" + n + "Dir", 1 },   "Lane " + n + " Direction", laneDirections, l == 1 ? 0 : 2));
         layout.add (std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "lane" + n + "Range", 1 }, "Lane " + n + " Range", laneRanges, l == 1 ? 0 : 1));
-        layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "lane" + n + "Amount", 1 },"Lane " + n + " Amount",
-                                                                 NRange (0.0f, 1.0f), l == 1 ? 0.45f : 0.35f));
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { "lane" + n + "Amount", 1 }, "Lane " + n + " Amount",
+            NRange (0.0f, 1.0f), l == 1 ? 0.45f : 0.35f,
+            juce::AudioParameterFloatAttributes()
+                .withStringFromValueFunction ([] (float v, int) { return formatValue (v, Fmt::percent); })));
     }
 
-    add ("velDepth",  "Vel Depth",  NRange (0.0f, 1.0f), 0.4f);
-    add ("randDepth", "Rand Depth", NRange (0.0f, 1.0f), 0.3f);
+    add ("velDepth",  "Vel Depth",  NRange (0.0f, 1.0f), 0.4f, Fmt::percent);
+    add ("randDepth", "Rand Depth", NRange (0.0f, 1.0f), 0.3f, Fmt::percent);
 
     // ---- euclidean generator ---------------------------------------------------
-    add ("euPulses", "Euclid Pulses", NRange (1.0f, 16.0f, 1.0f), 5.0f);
-    add ("euSteps",  "Euclid Steps",  NRange (2.0f, 16.0f, 1.0f), 16.0f);
-    add ("euRotate", "Euclid Rotate", NRange (0.0f, 15.0f, 1.0f), 0.0f);
-    add ("euAccent", "Euclid Accent", NRange (0.0f, 1.0f),        0.6f);
+    add ("euPulses", "Euclid Pulses", NRange (1.0f, 16.0f, 1.0f), 5.0f, Fmt::integer);
+    add ("euSteps",  "Euclid Steps",  NRange (2.0f, 16.0f, 1.0f), 16.0f, Fmt::integer);
+    add ("euRotate", "Euclid Rotate", NRange (0.0f, 15.0f, 1.0f), 0.0f, Fmt::integer);
+    add ("euAccent", "Euclid Accent", NRange (0.0f, 1.0f),        0.6f, Fmt::percent);
 
     return layout;
 }
@@ -120,6 +156,11 @@ void CalabiHatsProcessor::prepareToPlay (double newSampleRate, int)
     ppqPosition = 0.0;
     for (auto& p : pending)
         p.active = false;
+
+    for (auto& h : heldNotes)
+        h.active = false;
+
+    incomingMidi.ensureSize (2048);   // so the audio thread never allocates
 }
 
 bool CalabiHatsProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -252,7 +293,57 @@ int CalabiHatsProcessor::orderedStepIndex (long counter) const
     return order[(size_t) (counter % (long) order.size())];
 }
 
-void CalabiHatsProcessor::triggerStep (long counter)
+void CalabiHatsProcessor::emitNote (int sampleOffset, int semitones, float velocity)
+{
+    if (outgoingMidi == nullptr || paramValue ("midiOut") < 0.5f)
+        return;
+
+    const int channel = juce::jlimit (1, 16, (int) paramValue ("midiChannel") + 1);
+    const int root = juce::jlimit (0, 127, (int) paramValue ("midiRoot"));
+    const int note = juce::jlimit (0, 127, root + semitones);
+
+    outgoingMidi->addEvent (juce::MidiMessage::noteOn (channel, note,
+                                                       juce::jlimit (0.01f, 1.0f, velocity)),
+                            sampleOffset);
+
+    // Hold it for the step's gate, so the receiving device sees a real note length.
+    const double stepBeats = beatsPerStep ((int) paramValue ("arpDiv"));
+    const double gate = juce::jlimit (0.05f, 2.0f, paramValue ("arpGate"));
+    const int length = juce::jmax (16, (int) (stepBeats * gate * 60.0 / hostBpm * sampleRate));
+
+    for (auto& h : heldNotes)
+    {
+        if (h.active)
+            continue;
+
+        h = { length, note, channel, true };
+        return;
+    }
+
+    // No slot free: release the oldest right away so nothing hangs.
+    auto& oldest = heldNotes[0];
+    outgoingMidi->addEvent (juce::MidiMessage::noteOff (oldest.channel, oldest.note), sampleOffset);
+    oldest = { length, note, channel, true };
+}
+
+void CalabiHatsProcessor::flushNoteOffs (int sampleOffset)
+{
+    for (auto& h : heldNotes)
+    {
+        if (! h.active)
+            continue;
+
+        if (--h.samplesLeft > 0)
+            continue;
+
+        if (outgoingMidi != nullptr)
+            outgoingMidi->addEvent (juce::MidiMessage::noteOff (h.channel, h.note), sampleOffset);
+
+        h.active = false;
+    }
+}
+
+void CalabiHatsProcessor::triggerStep (long counter, int sampleOffset)
 {
     if (paramValue ("arpOn") < 0.5f)
         return;
@@ -271,10 +362,12 @@ void CalabiHatsProcessor::triggerStep (long counter)
     const int octaveAdd = octaves > 1 ? 12 * (int) ((counter / len) % octaves) : 0;
 
     const float velocity = pattern.stepVel[(size_t) index].load();
+    const int semitones = pattern.stepPitch[(size_t) index].load() + octaveAdd;
     const float src[4] = { laneValueAt (0, ppqPosition), laneValueAt (1, ppqPosition),
                            velocity, rng.nextFloat() * 2.0f - 1.0f };
 
-    startVoice (resolveParams (velocity, pattern.stepPitch[(size_t) index].load() + octaveAdd, src));
+    startVoice (resolveParams (velocity, semitones, src));
+    emitNote (sampleOffset, semitones, velocity);
 }
 
 //==============================================================================
@@ -306,12 +399,32 @@ void CalabiHatsProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     // In a host the sequencer follows the transport; standalone free-runs.
     const bool sequencerRunning = transportPlaying || ! hasHostTransport;
 
+
     const double ppqPerSample = hostBpm / 60.0 / sampleRate;
     const double stepBeats = beatsPerStep ((int) paramValue ("arpDiv"));
     const double stepSamples = stepBeats * 60.0 / hostBpm * sampleRate;
     const float swing = paramValue ("arpSwing");
 
-    auto midiIterator = midi.begin();
+    // Incoming MIDI is taken aside so the same buffer can carry what we generate.
+    incomingMidi.clear();
+    incomingMidi.addEvents (midi, 0, numSamples, 0);
+    midi.clear();
+    outgoingMidi = &midi;
+
+    // Stopping the transport must not leave a note hanging in the receiving device.
+    if (! sequencerRunning)
+    {
+        for (auto& h : heldNotes)
+        {
+            if (! h.active)
+                continue;
+
+            midi.addEvent (juce::MidiMessage::noteOff (h.channel, h.note), 0);
+            h.active = false;
+        }
+    }
+
+    auto midiIterator = incomingMidi.begin();
 
     float* left  = buffer.getWritePointer (0);
     float* right = numChannels > 1 ? buffer.getWritePointer (1) : nullptr;
@@ -319,7 +432,7 @@ void CalabiHatsProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     for (int i = 0; i < numSamples; ++i)
     {
         // ---- MIDI notes trigger a hit directly -----------------------------
-        while (midiIterator != midi.end() && (*midiIterator).samplePosition <= i)
+        while (midiIterator != incomingMidi.end() && (*midiIterator).samplePosition <= i)
         {
             const auto message = (*midiIterator).getMessage();
             if (message.isNoteOn())
@@ -337,7 +450,7 @@ void CalabiHatsProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
             if (delaySamples <= 0)
             {
-                triggerStep (counter);
+                triggerStep (counter, i);
             }
             else
             {
@@ -354,9 +467,11 @@ void CalabiHatsProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
             if (--p.samplesLeft <= 0)
             {
                 p.active = false;
-                triggerStep (p.counter);
+                triggerStep (p.counter, i);
             }
         }
+
+        flushNoteOffs (i);
 
         // ---- voices -----------------------------------------------------------
         float l = 0.0f, r = 0.0f;
@@ -370,6 +485,7 @@ void CalabiHatsProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         ppqPosition += ppqPerSample;
     }
 
+    outgoingMidi = nullptr;
     uiLevel = buffer.getMagnitude (0, numSamples);
 }
 

@@ -1,9 +1,21 @@
 #include "PluginEditor.h"
 #include "CalabiHatsData.h"
 
+namespace cy
+{
+    const juce::Image& brandMark()
+    {
+        static const juce::Image mark =
+            juce::ImageCache::getFromMemory (CalabiHatsData::calabi_hats_logo_png,
+                                             CalabiHatsData::calabi_hats_logo_pngSize);
+        return mark;
+    }
+}
+
 namespace
 {
     constexpr int knobWidth = 64, knobHeight = 68;
+    constexpr int headerBand = 74;
 
     /** Parameter display name, safe when the id is missing. */
     juce::String nameOf (juce::AudioProcessorValueTreeState& state, const juce::String& id,
@@ -34,12 +46,10 @@ CalabiHatsEditor::CalabiHatsEditor (CalabiHatsProcessor& p)
 {
     setLookAndFeel (&lnf);
 
-    logo = juce::ImageCache::getFromMemory (CalabiHatsData::calabi_hats_logo_png,
-                                            CalabiHatsData::calabi_hats_logo_pngSize);
+    logo = cy::brandMark();
 
     // ---- voice ---------------------------------------------------------------
-    for (int d = 0; d < ch::numDests; ++d)
-        addKnob (voiceContent, d);
+    buildVoiceModules();
 
     // ---- arpeggiator -----------------------------------------------------------
     arpOnButton.setClickingTogglesState (true);
@@ -56,6 +66,7 @@ CalabiHatsEditor::CalabiHatsEditor (CalabiHatsProcessor& p)
     {
         auto* k = knobs.add (new KnobBox (proc, id, nameOf (proc.apvts, id, id)));
         arpContent.addAndMakeVisible (k);
+        arpKnobs.push_back (k);
     }
 
     arpContent.addAndMakeVisible (stepGrid);
@@ -67,6 +78,7 @@ CalabiHatsEditor::CalabiHatsEditor (CalabiHatsProcessor& p)
     {
         auto* k = knobs.add (new KnobBox (proc, id, nameOf (proc.apvts, id, id).replace ("Euclid ", "")));
         arpContent.addAndMakeVisible (k);
+        euclidKnobs.push_back (k);
     }
 
     euTargetBox.addItemList ({ "Steps on / off", "Velocity", "Probability", "Accents (vel + prob)" }, 1);
@@ -104,6 +116,7 @@ CalabiHatsEditor::CalabiHatsEditor (CalabiHatsProcessor& p)
 
         auto* amount = knobs.add (new KnobBox (proc, "lane" + n + "Amount", "Amount"));
         laneContent.addAndMakeVisible (amount);
+        laneAmount[(size_t) l] = amount;
 
         laneBars.add (new LaneBars (proc, l));
         laneContent.addAndMakeVisible (laneBars.getLast());
@@ -127,17 +140,38 @@ CalabiHatsEditor::CalabiHatsEditor (CalabiHatsProcessor& p)
     {
         auto* k = knobs.add (new KnobBox (proc, id, juce::String (id) == "velDepth" ? "Vel depth" : "Rand depth"));
         sourceContent.addAndMakeVisible (k);
+        depthKnobs.push_back (k);
     }
 
     makeCaption (labels, sourceContent,
                  "Drag a chip onto any knob to route it. The outer ring shows the depth; "
                  "click the coloured dot under a knob to remove that routing.", cy::faint, 10.0f);
 
+    // ---- MIDI output ---------------------------------------------------------
+    midiOutButton.setClickingTogglesState (true);
+    arpContent.addAndMakeVisible (midiOutButton);
+    if (proc.apvts.getParameter ("midiOut") != nullptr)
+        buttonAttachments.add (new juce::AudioProcessorValueTreeState::ButtonAttachment (
+            proc.apvts, "midiOut", midiOutButton));
+
+    midiChannelBox = combos.add (new juce::ComboBox());
+    if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter ("midiChannel")))
+        midiChannelBox->addItemList (choice->choices, 1);
+    arpContent.addAndMakeVisible (midiChannelBox);
+    if (proc.apvts.getParameter ("midiChannel") != nullptr)
+        comboAttachments.add (new juce::AudioProcessorValueTreeState::ComboBoxAttachment (
+            proc.apvts, "midiChannel", *midiChannelBox));
+
+    midiChannelLabel = makeCaption (labels, arpContent, "CH");
+
+    midiRootKnob = knobs.add (new KnobBox (proc, "midiRoot", "MIDI note"));
+    arpContent.addAndMakeVisible (midiRootKnob);
+
     triggerButton.onClick = [this] { proc.triggerManualHit (1.0f, 0); };
     addAndMakeVisible (triggerButton);
 
     // ---- sections --------------------------------------------------------------------
-    voiceSection  = std::make_unique<Section> ("E-Hat Voice", voiceContent, 150);
+    voiceSection  = std::make_unique<Section> ("E-Hat Voice", voiceContent, 450);
     arpSection    = std::make_unique<Section> ("Arpeggiator", arpContent, 268);
     laneSection   = std::make_unique<Section> ("Mod Lanes", laneContent, 292);
     sourceSection = std::make_unique<Section> ("Mod Sources", sourceContent, 86);
@@ -153,8 +187,8 @@ CalabiHatsEditor::CalabiHatsEditor (CalabiHatsProcessor& p)
     addAndMakeVisible (viewport);
 
     setResizable (true, true);
-    setResizeLimits (820, 480, 1800, 1400);
-    setSize (960, 760);
+    setResizeLimits (860, 520, 1900, 1500);
+    setSize (1000, 820);
     startTimerHz (30);
 }
 
@@ -164,6 +198,55 @@ CalabiHatsEditor::~CalabiHatsEditor()
 }
 
 //==============================================================================
+void CalabiHatsEditor::buildVoiceModules()
+{
+    struct Spec
+    {
+        const char* title;
+        const char* blurb;
+        juce::Colour colour;
+        std::vector<int> dests;
+    };
+
+    // In the order the signal actually travels through the voice.
+    const std::vector<Spec> specs
+    {
+        { "1 · METAL",    "The body — six squares in 808 ratios", cy::lane1,  { ch::dMetalFreq, ch::dMetalLevel } },
+        { "2 · CLICK",    "The attack — a filtered noise burst",  cy::randCol,{ ch::dClickFreq, ch::dClickLevel } },
+        { "3 · HISS",     "The air — high-passed noise",          cy::lane2,  { ch::dHissFreq,  ch::dHissLevel } },
+        { "4 · FM HIT",   "The metallic transient",               cy::velCol, { ch::dFmFreq,    ch::dFmDecay } },
+        { "5 · COMB",     "Tuned metallic resonance",             cy::azure,  { ch::dCombFreq,  ch::dCombFb, ch::dCombMix } },
+        { "6 · RING MOD", "Inharmonic colour",                    cy::orchid, { ch::dModFreq,   ch::dModAmount, ch::dModMix } },
+        { "7 · ENVELOPE", "How the hit opens and dies",           cy::gold,   { ch::dAttack,    ch::dDecay } },
+        { "8 · OUTPUT",   "Dynamics, stereo and level",           cy::steel,  { ch::dVelSens,   ch::dWidth, ch::dOutput } }
+    };
+
+    for (const auto& spec : specs)
+    {
+        auto* box = modules.add (new ModuleBox (spec.title, spec.blurb, spec.colour));
+        voiceContent.addAndMakeVisible (box);
+
+        std::vector<KnobBox*> inside;
+        for (int dest : spec.dests)
+        {
+            auto* k = knobs.add (new KnobBox (proc, dest, ch::destParamIDs()[dest], ch::destNames()[dest]));
+            box->addAndMakeVisible (k);
+            inside.push_back (k);
+        }
+        moduleKnobs.push_back (inside);
+    }
+
+    // The filter is its own module: a pad, not knobs.
+    auto* filterBox = modules.add (new ModuleBox ("9 · HIGH-PASS FILTER",
+                                                  "Where the hat sits above the kick",
+                                                  cy::neon));
+    voiceContent.addAndMakeVisible (filterBox);
+    moduleKnobs.push_back ({});
+
+    filterPad = std::make_unique<FilterPad> (proc);
+    filterBox->addAndMakeVisible (filterPad.get());
+}
+
 KnobBox* CalabiHatsEditor::addKnob (juce::Component& parent, int dest)
 {
     auto* k = knobs.add (new KnobBox (proc, dest, ch::destParamIDs()[dest], ch::destNames()[dest]));
@@ -287,25 +370,44 @@ void CalabiHatsEditor::paint (juce::Graphics& g)
                          cy::voidBg.withAlpha (0.0f), (float) getWidth() * 0.5f, 360.0f, true });
     g.fillRect (getLocalBounds());
 
-    auto header = getLocalBounds().removeFromTop (54).reduced (16, 8);
+    // the isologo, very faint, watermarking the plate behind the rack
+    if (logo.isValid())
+    {
+        const float size = (float) juce::jmin (getWidth(), getHeight()) * 0.62f;
+        g.setOpacity (0.045f);
+        g.drawImage (logo,
+                     juce::Rectangle<float> ((float) getWidth() - size * 0.72f,
+                                             (float) getHeight() - size * 0.78f, size, size),
+                     juce::RectanglePlacement::centred);
+        g.setOpacity (1.0f);
+    }
+
+    // header band
+    auto band = getLocalBounds().removeFromTop (headerBand);
+    g.setColour (cy::panel.withAlpha (0.92f));
+    g.fillRect (band);
+    g.setColour (cy::line);
+    g.drawLine (0.0f, (float) headerBand - 0.5f, (float) getWidth(), (float) headerBand - 0.5f, 1.0f);
+
+    auto header = band.reduced (16, 9);
 
     if (logo.isValid())
     {
-        auto logoArea = header.removeFromLeft (40).toFloat();
+        auto logoArea = header.removeFromLeft (56).toFloat();
         g.drawImage (logo, logoArea, juce::RectanglePlacement::centred);
-        header.removeFromLeft (10);
+        header.removeFromLeft (12);
     }
 
     g.setColour (cy::ink);
-    g.setFont (juce::Font (juce::FontOptions (20.0f)).boldened());
-    g.drawText ("CALABI HATS", header.removeFromTop (24), juce::Justification::centredLeft, false);
+    g.setFont (juce::Font (juce::FontOptions (24.0f)).boldened());
+    g.drawText ("CALABI HATS", header.removeFromTop (28), juce::Justification::centredLeft, false);
 
-    g.setColour (cy::faint);
-    g.setFont (juce::Font (juce::FontOptions (9.0f)));
-    g.drawText ("HI-HAT ENGINE  -  CALABI YAU", header, juce::Justification::centredLeft, false);
+    g.setColour (cy::gold);
+    g.setFont (juce::Font (juce::FontOptions (9.5f)));
+    g.drawText ("HI-HAT ENGINE  ·  CALABI YAU", header, juce::Justification::centredLeft, false);
 
     // output meter
-    auto meter = getLocalBounds().removeFromTop (54).removeFromRight (160).reduced (16, 24);
+    auto meter = getLocalBounds().removeFromTop (headerBand).removeFromRight (160).reduced (16, 32);
     g.setColour (cy::slot);
     g.fillRect (meter);
     g.setColour (cy::line);
@@ -317,8 +419,8 @@ void CalabiHatsEditor::paint (juce::Graphics& g)
 
 void CalabiHatsEditor::resized()
 {
-    triggerButton.setBounds (getWidth() - 260, 18, 80, 24);
-    viewport.setBounds (getLocalBounds().withTrimmedTop (54));
+    triggerButton.setBounds (getWidth() - 262, 26, 82, 26);
+    viewport.setBounds (getLocalBounds().withTrimmedTop (headerBand));
     layoutSections();
 }
 
@@ -346,20 +448,44 @@ void CalabiHatsEditor::layoutSections()
     //== voice ===============================================================
     {
         auto bounds = voiceContent.getLocalBounds();
-        const int perRow = juce::jmax (6, bounds.getWidth() / knobWidth);
-        int index = 0;
-        auto row = bounds.removeFromTop (knobHeight);
+        const int gap = 10;
+        const int moduleHeight = ModuleBox::headerHeight + knobHeight + 8;
+        const int filterHeight = ModuleBox::headerHeight + 150 + 8;
 
-        for (int d = 0; d < ch::numDests; ++d)
+        int x = bounds.getX(), y = bounds.getY(), rowHeight = 0;
+
+        auto place = [&] (ModuleBox* box, int width, int height)
         {
-            if (index > 0 && index % perRow == 0)
+            if (x > bounds.getX() && x + width > bounds.getRight())
             {
-                bounds.removeFromTop (4);
-                row = bounds.removeFromTop (knobHeight);
+                x = bounds.getX();
+                y += rowHeight + gap;
+                rowHeight = 0;
             }
 
-            knobs[d]->setBounds (row.removeFromLeft (knobWidth));
-            ++index;
+            box->setBounds (x, y, width, height);
+            x += width + gap;
+            rowHeight = juce::jmax (rowHeight, height);
+        };
+
+        for (int m = 0; m < modules.size(); ++m)
+        {
+            auto* box = modules[m];
+            const auto& inside = moduleKnobs[(size_t) m];
+
+            if (inside.empty())    // the filter pad
+            {
+                place (box, juce::jmax (300, bounds.getWidth() / 2 - gap), filterHeight);
+                filterPad->setBounds (box->contentArea());
+                continue;
+            }
+
+            const int width = (int) inside.size() * knobWidth + 20;
+            place (box, width, moduleHeight);
+
+            auto inner = box->contentArea();
+            for (auto* k : inside)
+                k->setBounds (inner.removeFromLeft (knobWidth));
         }
     }
 
@@ -382,10 +508,21 @@ void CalabiHatsEditor::layoutSections()
         }
 
         randomNotesButton.setBounds (top.removeFromLeft (150).reduced (0, 8));
+        top.removeFromLeft (10);
+        midiOutButton.setBounds (top.removeFromLeft (96).reduced (0, 8));
+        top.removeFromLeft (6);
+        {
+            auto slot = top.removeFromLeft (56);
+            midiChannelLabel->setBounds (slot.removeFromTop (12));
+            midiChannelBox->setBounds (slot.reduced (0, 1));
+        }
 
         auto knobRow = bounds.removeFromTop (knobHeight);
-        for (int i = 0; i < 4; ++i)
-            knobs[ch::numDests + i]->setBounds (knobRow.removeFromLeft (knobWidth));
+        for (auto* k : arpKnobs)
+            k->setBounds (knobRow.removeFromLeft (knobWidth));
+
+        knobRow.removeFromLeft (12);
+        midiRootKnob->setBounds (knobRow.removeFromLeft (knobWidth));
 
         bounds.removeFromTop (6);
         stepGrid.setBounds (bounds.removeFromTop (150));
@@ -395,8 +532,9 @@ void CalabiHatsEditor::layoutSections()
         labels[2]->setBounds (euCaption);
 
         auto euKnobs = right.removeFromTop (knobHeight);
-        for (int i = 0; i < 4; ++i)
-            knobs[ch::numDests + 4 + i]->setBounds (euKnobs.removeFromLeft (juce::jmax (44, right.getWidth() / 4)));
+        const int euWidth = juce::jmax (44, right.getWidth() / 4);
+        for (auto* k : euclidKnobs)
+            k->setBounds (euKnobs.removeFromLeft (euWidth));
 
         euclidReadout.setBounds (right.removeFromTop (16));
         right.removeFromTop (6);
@@ -428,7 +566,8 @@ void CalabiHatsEditor::layoutSections()
                 head.removeFromLeft (6);
             }
 
-            knobs[ch::numDests + 8 + l]->setBounds (head.removeFromLeft (knobWidth).withHeight (knobHeight));
+            if (auto* amount = laneAmount[(size_t) l])
+                amount->setBounds (head.removeFromLeft (knobWidth).withHeight (knobHeight));
 
             laneBars[l]->setBounds (lane.removeFromTop (56));
             lane.removeFromTop (4);
@@ -454,8 +593,8 @@ void CalabiHatsEditor::layoutSections()
         }
 
         row.removeFromLeft (10);
-        knobs[ch::numDests + 10]->setBounds (row.removeFromLeft (knobWidth));
-        knobs[ch::numDests + 11]->setBounds (row.removeFromLeft (knobWidth));
+        for (auto* k : depthKnobs)
+            k->setBounds (row.removeFromLeft (knobWidth));
 
         labels[labels.size() - 1]->setBounds (bounds.removeFromTop (18));
     }

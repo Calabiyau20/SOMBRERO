@@ -21,7 +21,7 @@ public:
 
     const juce::String getName() const override { return "Calabi Hats"; }
     bool acceptsMidi() const override  { return true; }
-    bool producesMidi() const override { return false; }
+    bool producesMidi() const override { return true; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 2.0; }
 
@@ -51,8 +51,11 @@ public:
     static double beatsPerStep (int divisionIndex);
 
 private:
-    void triggerStep (long stepCounter);
+    void triggerStep (long stepCounter, int sampleOffset);
     void startVoice (const ch::VoiceParams& vp);
+    /** Writes the note the sequencer just played to the MIDI output, if it is on. */
+    void emitNote (int sampleOffset, int semitones, float velocity);
+    void flushNoteOffs (int sampleOffset);
     ch::VoiceParams resolveParams (float velocity, int semitones, const float srcValues[4]);
     float modulated (int dest, const float srcValues[4]) const;
     float laneValueAt (int laneIndex, double ppq) const;
@@ -78,6 +81,12 @@ private:
 
     struct Pending { int samplesLeft = 0; long counter = 0; bool active = false; };
     std::array<Pending, 8> pending;
+
+    // MIDI output: the buffer for the block being rendered, plus the note-offs owed.
+    juce::MidiBuffer incomingMidi;
+    juce::MidiBuffer* outgoingMidi = nullptr;
+    struct HeldNote { int samplesLeft = 0; int note = 0; int channel = 1; bool active = false; };
+    std::array<HeldNote, 16> heldNotes;
 
     juce::Random rng;
 
